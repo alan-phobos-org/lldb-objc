@@ -534,13 +534,13 @@ def get_all_classes(frame, pattern=None, force_reload=False, batch_size=None):
                     class_name = class_name_result.GetSummary()
                     if class_name:
                         class_name = class_name.strip('"')
-                        if matches_pattern(class_name, pattern):
-                            class_names.append(class_name)
+                        # Add all classes to cache (no pattern filtering here)
+                        class_names.append(class_name)
             continue
 
-        # Read consolidated string buffer
+        # Read consolidated string buffer (without pattern filtering - get all classes)
         batch_names = read_consolidated_string_buffer(
-            batch_result, current_batch_size, process, frame, pattern
+            batch_result, current_batch_size, process, frame, pattern=None
         )
         timing['expression_count'] += 1  # For free() in read_consolidated_string_buffer
         timing['memory_read_count'] += 2  # One for offsets, one for string data
