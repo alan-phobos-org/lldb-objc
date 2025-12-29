@@ -40,12 +40,15 @@ Output modes (based on number of matches):
   - --verbose: Adds detailed timing breakdown and resource usage
 """
 
+from __future__ import annotations
+
 import lldb
-import re
 import os
+import re
 import struct
 import sys
 import time
+from typing import Any, Dict, List, Optional, Tuple
 
 # Configurable batch size for class_getName() batching
 # Higher values = fewer expression evaluations but larger expression parsing overhead
@@ -63,11 +66,23 @@ try:
 except ImportError:
     __version__ = "unknown"
 
+from objc_utils import unquote_string
+
+# Type aliases
+TimingDict = Dict[str, Any]
+CacheEntry = Dict[str, Any]
+
 # Global cache for class lists
 # Structure: {process_id: {'classes': [class_names], 'timestamp': time, 'count': total_count}}
-_class_cache = {}
+_class_cache: Dict[int, CacheEntry] = {}
 
-def find_objc_classes(debugger, command, result, internal_dict):
+
+def find_objc_classes(
+    debugger: lldb.SBDebugger,
+    command: str,
+    result: lldb.SBCommandReturnObject,
+    internal_dict: Dict[str, Any]
+) -> None:
     """
     Find Objective-C classes matching a wildcard pattern.
     Lists all registered classes that match the specified pattern.
@@ -136,7 +151,10 @@ def find_objc_classes(debugger, command, result, internal_dict):
             pattern_args.append(arg)
         i += 1
 
+    # Get pattern, treating empty string as "no pattern" (list all)
     pattern = pattern_args[0] if pattern_args else None
+    if pattern == '' or pattern == '""':
+        pattern = None
 
     # Handle cache clearing
     if clear_cache:
@@ -163,7 +181,7 @@ def find_objc_classes(debugger, command, result, internal_dict):
     if num_matches == 0:
         print(f"No classes found{f' matching: {pattern}' if pattern else ''}")
     elif num_matches == 1:
-        # Exactly 1 match: Show detailed hierarchy view
+        # Exactly 1 match: Show detailed hierarchy view with dylib
         class_name = class_names[0]
 
         hierarchy = get_class_hierarchy(frame, class_name)
@@ -174,6 +192,12 @@ def find_objc_classes(debugger, command, result, internal_dict):
             print(f"{class_name} \033[90m→ {hierarchy_str}\033[0m")
         else:
             print(f"{class_name}")
+
+        # Show dylib/framework containing the class
+        image_path = get_class_image_path(frame, class_name)
+        if image_path:
+            # Display the path in dim gray
+            print(f"  \033[90m{image_path}\033[0m")
 
         # Show ivars if --ivars flag is present
         if show_ivars:
@@ -270,7 +294,46 @@ def find_objc_classes(debugger, command, result, internal_dict):
 
     result.SetStatus(lldb.eReturnStatusSuccessFinishResult)
 
-def get_class_hierarchy(frame, class_name):
+def get_class_image_path(frame: lldb.SBFrame, class_name: str) -> Optional[str]:
+    """
+    Get the path to the dylib/framework containing a class.
+
+    Uses class_getImageName() to get the image path for the class.
+
+    Args:
+        frame: LLDB frame for expression evaluation
+        class_name: Name of the class to look up
+
+    Returns:
+        Path to the image (dylib/framework) containing the class, or None on error
+    """
+    # Get the class object
+    class_expr = f'(void *)NSClassFromString(@"{class_name}")'
+    class_result = frame.EvaluateExpression(class_expr)
+
+    if not class_result.IsValid() or class_result.GetError().Fail():
+        return None
+
+    class_ptr = class_result.GetValueAsUnsigned()
+    if class_ptr == 0:
+        return None
+
+    # Get the image name using class_getImageName
+    image_expr = f'(const char *)class_getImageName((Class)0x{class_ptr:x})'
+    image_result = frame.EvaluateExpression(image_expr)
+
+    if not image_result.IsValid() or image_result.GetError().Fail():
+        return None
+
+    image_path = image_result.GetSummary()
+    if image_path:
+        image_path = unquote_string(image_path)
+        return image_path
+
+    return None
+
+
+def get_class_hierarchy(frame: lldb.SBFrame, class_name: str) -> List[str]:
     """
     Get the inheritance hierarchy for a class.
     Returns a list of class names from the given class up to the root (e.g., NSObject).
@@ -308,7 +371,7 @@ def get_class_hierarchy(frame, class_name):
 
         current_name = name_result.GetSummary()
         if current_name:
-            current_name = current_name.strip('"')
+            current_name = unquote_string(current_name)
             hierarchy.append(current_name)
         else:
             break
@@ -327,7 +390,7 @@ def get_class_hierarchy(frame, class_name):
     return hierarchy
 
 
-def get_class_ivars(frame, class_name):
+def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]]:
     """
     Get the instance variables for a class.
 
@@ -552,7 +615,7 @@ def get_class_ivars(frame, class_name):
     return ivars
 
 
-def parse_property_attributes(attr_string):
+def parse_property_attributes(attr_string: str) -> Dict[str, Any]:
     """
     Parse Objective-C property attribute string into human-readable format.
 
@@ -629,7 +692,7 @@ def parse_property_attributes(attr_string):
     return (type_string, attributes, ivar_name)
 
 
-def decode_type_encoding(type_enc):
+def decode_type_encoding(type_enc: str) -> str:
     """
     Decode Objective-C type encoding into human-readable type.
 
@@ -834,7 +897,7 @@ def decode_type_encoding(type_enc):
     return type_enc
 
 
-def get_class_properties(frame, class_name):
+def get_class_properties(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, Any]]:
     """
     Get the properties for a class.
 
@@ -1045,7 +1108,7 @@ def get_class_properties(frame, class_name):
     return properties
 
 
-def matches_pattern(class_name, pattern):
+def matches_pattern(class_name: str, pattern: Optional[str]) -> bool:
     """
     Check if class name matches the pattern.
     Supports wildcards: * (any characters) and ? (single character)
@@ -1075,7 +1138,7 @@ def matches_pattern(class_name, pattern):
         # Exact matching (case-sensitive)
         return class_name == pattern
 
-def build_batch_expression(class_pointers_batch):
+def build_batch_expression(class_pointers_batch: List[int]) -> str:
     """
     Build a compound expression that calls class_getName() for multiple classes
     and consolidates the results into a single buffer.
@@ -1139,7 +1202,13 @@ def build_batch_expression(class_pointers_batch):
     return expr
 
 
-def read_consolidated_string_buffer(batch_result, batch_size, process, frame, pattern=None):
+def read_consolidated_string_buffer(
+    batch_result: lldb.SBValue,
+    batch_size: int,
+    process: lldb.SBProcess,
+    frame: lldb.SBFrame,
+    pattern: Optional[str] = None
+) -> List[str]:
     """
     Read class names from a consolidated string buffer.
 
@@ -1214,7 +1283,10 @@ def read_consolidated_string_buffer(batch_result, batch_size, process, frame, pa
     return class_names
 
 
-def try_exact_class_match(frame, class_name):
+def try_exact_class_match(
+    frame: lldb.SBFrame,
+    class_name: str
+) -> Tuple[Optional[str], Optional[TimingDict]]:
     """
     Fast-path: Try to match a specific class name directly using NSClassFromString.
 
@@ -1247,7 +1319,7 @@ def try_exact_class_match(frame, class_name):
 
     actual_name = name_result.GetSummary()
     if actual_name:
-        actual_name = actual_name.strip('"')
+        actual_name = unquote_string(actual_name)
         if actual_name == class_name:
             timing = {
                 'total': time.time() - start_time,
@@ -1263,7 +1335,12 @@ def try_exact_class_match(frame, class_name):
     return None, None
 
 
-def get_all_classes(frame, pattern=None, force_reload=False, batch_size=None):
+def get_all_classes(
+    frame: lldb.SBFrame,
+    pattern: Optional[str] = None,
+    force_reload: bool = False,
+    batch_size: Optional[int] = None
+) -> Tuple[List[str], TimingDict, int, bool]:
     """
     Get all Objective-C classes using objc_copyClassList.
     Returns a list of class names matching the pattern.
@@ -1460,7 +1537,7 @@ def get_all_classes(frame, pattern=None, force_reload=False, batch_size=None):
                 if class_name_result.IsValid():
                     class_name = class_name_result.GetSummary()
                     if class_name:
-                        class_name = class_name.strip('"')
+                        class_name = unquote_string(class_name)
                         # Add all classes to cache (no pattern filtering here)
                         class_names.append(class_name)
             continue
@@ -1511,10 +1588,12 @@ def get_all_classes(frame, pattern=None, force_reload=False, batch_size=None):
     return filtered_classes, timing, class_count, False
 
 
-def __lldb_init_module(debugger, internal_dict):
+def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any]) -> None:
     """Initialize the module by registering the command."""
     debugger.HandleCommand(
-        'command script add -f objc_cls.find_objc_classes ocls'
+        'command script add -h "Find Objective-C classes. '
+        'Usage: ocls [pattern] [--reload] [--clear-cache] [--verbose]" '
+        '-f objc_cls.find_objc_classes ocls'
     )
     print(f"[lldb-objc v{__version__}] Objective-C class finder command 'ocls' has been installed.")
     print("Usage: ocls [pattern]")

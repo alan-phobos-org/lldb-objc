@@ -5,8 +5,11 @@ Custom LLDB commands for working with Objective-C methods, including private sym
 ## Features
 
 - **obrk**: Set breakpoints using familiar Objective-C syntax: `-[ClassName selector:]`
-- **osel**: Search for selectors in any Objective-C class
+- **osel**: Search for selectors in any Objective-C class with wildcard patterns
 - **ocls**: Find and list Objective-C classes with wildcard pattern matching
+- **ocall**: Call Objective-C methods directly from LLDB
+- **owatch**: Set auto-logging breakpoints to watch method calls
+- **oprotos**: Find protocol conformance across all classes
 - Works with private classes and methods
 - Supports both instance methods (`-`) and class methods (`+`)
 - Runtime resolution using `NSClassFromString`, `NSSelectorFromString`, and `class_getMethodImplementation`
@@ -169,6 +172,80 @@ ocls --verbose --reload          # Detailed metrics for cache refresh
 - **21+ matches**: Simple class name list
 - **--verbose**: Adds detailed timing breakdown and resource usage to any mode
 
+### ocall - Call Methods
+
+Call Objective-C methods directly from LLDB and see the results.
+
+**Syntax:**
+```
+ocall +[ClassName classMethod]
+ocall +[ClassName method:withArgs:]
+ocall -[$variable selector]
+```
+
+**Examples:**
+```
+# Call class methods
+ocall +[NSDate date]
+ocall +[NSString stringWithFormat:] "Hello %@" "World"
+
+# Call instance methods on variables
+ocall -[$myString length]
+ocall -[$myDict objectForKey:] "someKey"
+```
+
+### owatch - Watch Methods
+
+Set auto-logging breakpoints that print method calls without stopping execution.
+
+**Syntax:**
+```
+owatch -[ClassName selector:]
+owatch +[ClassName classMethod:]
+```
+
+**Flags:**
+- `--minimal`: Show only timestamp and method signature (compact)
+- `--stack`: Include stack trace in the output
+
+**Examples:**
+```
+# Watch method calls (default: shows args and return value)
+owatch -[NSString initWithFormat:]
+
+# Minimal output (timestamp + signature only)
+owatch --minimal -[UIViewController viewDidLoad]
+
+# Include stack traces
+owatch --stack +[NSUserDefaults standardUserDefaults]
+```
+
+### oprotos - Find Protocol Conformance
+
+Find which classes conform to a specific protocol.
+
+**Syntax:**
+```
+oprotos ProtocolName       # Find conforming classes
+oprotos --list [pattern]   # List available protocols
+```
+
+**Examples:**
+```
+# Find classes conforming to NSCoding
+oprotos NSCoding
+
+# Find NSCopying conformers
+oprotos NSCopying
+
+# List all protocols
+oprotos --list
+
+# List protocols matching pattern
+oprotos --list *Delegate
+oprotos --list NS*
+```
+
 ## How It Works
 
 1. **Class Resolution**: Uses `NSClassFromString()` to find the class at runtime
@@ -191,18 +268,19 @@ ocls --verbose --reload          # Detailed metrics for cache refresh
 
 ## Documentation
 
-- [QUICKSTART.md](docs/QUICKSTART.md) - Quick start guide
-- [IMPLEMENTATION_NOTES.md](docs/IMPLEMENTATION_NOTES.md) - Technical implementation details
 - [PLAN.md](docs/PLAN.md) - Future features and roadmap
-- [research.md](docs/research.md) - Development research and exploration notes
+- [PERFORMANCE.md](docs/PERFORMANCE.md) - Performance benchmarks and optimization details
+- [UI_CONVENTIONS.md](docs/UI_CONVENTIONS.md) - UI formatting and display conventions
 
 ## Testing
 
-Test files and test cases can be found in the [tests/](tests/) directory:
-- [test_bootstrap.py](tests/test_bootstrap.py) - Test bootstrap script
-- [test_bootstrap.sh](tests/test_bootstrap.sh) - Shell script for bootstrapping tests
-- [test_osel.py](tests/test_osel.py) - Test suite for osel command
-- [test_runner.md](tests/test_runner.md) - Test cases documentation
+Test files can be found in the [tests/](tests/) directory. Run all tests with:
+```bash
+./tests/run_all_tests.py          # Run all tests
+./tests/run_all_tests.py --quick  # Run quick subset only
+```
+
+See [tests/test_runner.md](tests/test_runner.md) for more details on the test framework.
 
 ## Examples
 

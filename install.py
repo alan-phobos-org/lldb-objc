@@ -40,6 +40,9 @@ def get_lldbinit_commands():
         f"command script import {SCRIPT_DIR / 'objc_breakpoint.py'}",
         f"command script import {SCRIPT_DIR / 'objc_sel.py'}",
         f"command script import {SCRIPT_DIR / 'objc_cls.py'}",
+        f"command script import {SCRIPT_DIR / 'objc_call.py'}",
+        f"command script import {SCRIPT_DIR / 'objc_watch.py'}",
+        f"command script import {SCRIPT_DIR / 'objc_protos.py'}",
         MARKER_END,
     ]
     return "\n".join(commands) + "\n"
@@ -99,6 +102,10 @@ def install():
         SCRIPT_DIR / "objc_breakpoint.py",
         SCRIPT_DIR / "objc_sel.py",
         SCRIPT_DIR / "objc_cls.py",
+        SCRIPT_DIR / "objc_call.py",
+        SCRIPT_DIR / "objc_watch.py",
+        SCRIPT_DIR / "objc_protos.py",
+        SCRIPT_DIR / "objc_utils.py",
         SCRIPT_DIR / "version.py",
     ]
 
@@ -125,9 +132,12 @@ def install():
 
     print("\nInstallation complete!")
     print("\nThe following commands are now available in LLDB:")
-    print("  obrk - Set breakpoints on Objective-C methods")
-    print("  osel - Find selectors in Objective-C classes")
-    print("  ocls - Find Objective-C classes by pattern")
+    print("  obrk   - Set breakpoints on Objective-C methods")
+    print("  osel   - Find selectors in Objective-C classes")
+    print("  ocls   - Find Objective-C classes by pattern")
+    print("  ocall  - Call Objective-C methods from the command line")
+    print("  owatch - Set auto-logging breakpoints (method watcher)")
+    print("  oprotos - Find classes conforming to a protocol")
     print("\nStart LLDB to use the commands.")
 
     return True

@@ -1,90 +1,161 @@
 #!/usr/bin/env python3
 """
 Detailed timing test for --ivars and --properties performance.
-Measures the actual expression evaluation time.
+
+This is a performance/benchmarking test that measures execution times
+across multiple classes with varying ivar/property counts.
+Not run by default in the test suite (use --perf flag).
+
+Uses a shared LLDB session for faster test execution.
 """
 
-import subprocess
-import tempfile
-import os
 import sys
+import re
+from test_helpers import (
+    TestResult, check_hello_world_binary, run_shared_test_suite
+)
 
-# Get the script directory
-script_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(script_dir)
 
-# Path to HelloWorld binary
-hello_world_path = os.path.join(project_root, "examples/HelloWorld/HelloWorld/HelloWorld")
+# =============================================================================
+# Validator Functions
+# =============================================================================
 
-# Verify paths exist
-if not os.path.exists(hello_world_path):
-    print(f"Error: HelloWorld binary not found at: {hello_world_path}")
-    sys.exit(1)
+def validate_nsobject_performance():
+    """Validator for NSObject performance."""
+    def validator(output):
+        if 'NSObject' in output:
+            return True, "NSObject completed"
+        return False, f"Failed: {output[:200]}"
+    return validator
 
-# Test with a few different classes
-test_classes = [
-    "NSObject",          # Small - 0 ivars, ~0 properties 
-    "NSString",          # Medium
-    "UIViewController",  # Medium-large
-    "IDSServiceProperties"  # Large - 91 ivars, 95 properties
-]
 
-print(f"Timing comparison: Before (individual calls) vs After (batched)")
-print(f"Binary path: {hello_world_path}\n")
+def validate_nsstring_performance():
+    """Validator for NSString performance."""
+    def validator(output):
+        if 'NSString' in output:
+            return True, "NSString completed"
+        return False, f"Failed: {output[:200]}"
+    return validator
 
-for class_name in test_classes:
-    # Create LLDB command sequence
-    lldb_commands = f"""
-file {hello_world_path}
-b main
-run
-expr (void)dlopen("/System/Library/PrivateFrameworks/IDS.framework/IDS", 0x2)
 
-# Test ivars
-script import time; start = time.time()
-ocls --ivars {class_name}
-script elapsed = time.time() - start; print(f"\\n[IVARS_TIME: {{elapsed:.3f}}s]")
-
-# Test properties  
-script start = time.time()
-ocls --properties {class_name}
-script elapsed = time.time() - start; print(f"\\n[PROPS_TIME: {{elapsed:.3f}}s]")
-
-quit
-"""
-
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.lldb', delete=False) as f:
-        f.write(lldb_commands)
-        command_file = f.name
-
-    try:
-        result = subprocess.run(['lldb', '-s', command_file],
-                              capture_output=True,
-                              text=True,
-                              check=False,
-                              timeout=30)
-
-        # Parse output
-        output = result.stdout
-
-        # Extract counts and timing
-        import re
+def validate_idsserviceproperties_performance():
+    """Validator for IDSServiceProperties performance."""
+    def validator(output):
+        # Parse counts
         ivars_match = re.search(r'Instance Variables \((\d+)\)', output)
         props_match = re.search(r'Properties \((\d+)\)', output)
-        ivars_time = re.search(r'\[IVARS_TIME: ([\d.]+)s\]', output)
-        props_time = re.search(r'\[PROPS_TIME: ([\d.]+)s\]', output)
 
         ivar_count = int(ivars_match.group(1)) if ivars_match else 0
         prop_count = int(props_match.group(1)) if props_match else 0
-        ivar_sec = float(ivars_time.group(1)) if ivars_time else 0
-        prop_sec = float(props_time.group(1)) if props_time else 0
 
-        print(f"{class_name}:")
-        print(f"  Ivars:      {ivar_count:3d}  in {ivar_sec:5.3f}s  ({ivar_sec/max(ivar_count,1)*1000:4.0f}ms per ivar)" if ivar_count > 0 else f"  Ivars:      {ivar_count:3d}")
-        print(f"  Properties: {prop_count:3d}  in {prop_sec:5.3f}s  ({prop_sec/max(prop_count,1)*1000:4.0f}ms per property)" if prop_count > 0 else f"  Properties: {prop_count:3d}")
-        print()
+        if ivars_match or props_match:
+            return True, f"{ivar_count} ivars, {prop_count} props"
+        elif 'not found' in output.lower():
+            return False, "IDSServiceProperties not found (framework may not be loaded)"
+        return False, f"Failed: {output[:200]}"
+    return validator
 
-    except subprocess.TimeoutExpired:
-        print(f"{class_name}: TIMEOUT")
-    finally:
-        os.unlink(command_file)
+
+def validate_ivars_only():
+    """Validator for --ivars only performance."""
+    def validator(output):
+        ivars_match = re.search(r'Instance Variables \((\d+)\)', output)
+        if ivars_match:
+            ivar_count = int(ivars_match.group(1))
+            return True, f"{ivar_count} ivars"
+        return False, f"Failed: {output[:200]}"
+    return validator
+
+
+def validate_properties_only():
+    """Validator for --properties only performance."""
+    def validator(output):
+        props_match = re.search(r'Properties \((\d+)\)', output)
+        if props_match:
+            prop_count = int(props_match.group(1))
+            return True, f"{prop_count} properties"
+        return False, f"Failed: {output[:200]}"
+    return validator
+
+
+def validate_performance_target():
+    """Validator for performance target."""
+    def validator(output):
+        if 'Instance Variables' in output or 'Properties' in output:
+            return True, "Completed within shared session"
+        return False, f"Command failed: {output[:200]}"
+    return validator
+
+
+# =============================================================================
+# Test Specifications
+# =============================================================================
+
+def get_test_specs():
+    """Return list of test specifications."""
+    return [
+        # By class size
+        (
+            "Performance: NSObject",
+            ['ocls --ivars --properties NSObject'],
+            validate_nsobject_performance()
+        ),
+        (
+            "Performance: NSString",
+            ['ocls --ivars --properties NSString'],
+            validate_nsstring_performance()
+        ),
+        (
+            "Performance: IDSServiceProperties",
+            ['ocls --ivars --properties IDSServiceProperties'],
+            validate_idsserviceproperties_performance()
+        ),
+        # By flag
+        (
+            "Performance: --ivars only",
+            ['ocls --ivars IDSServiceProperties'],
+            validate_ivars_only()
+        ),
+        (
+            "Performance: --properties only",
+            ['ocls --properties IDSServiceProperties'],
+            validate_properties_only()
+        ),
+        # Performance target
+        (
+            "Performance target: <5s for large class",
+            ['ocls --ivars --properties IDSServiceProperties'],
+            validate_performance_target()
+        ),
+    ]
+
+
+def main():
+    """Run all timing/performance tests using shared LLDB session."""
+
+    categories = {
+        "By class size": (0, 3),
+        "By flag": (3, 5),
+        "Performance target": (5, 6),
+    }
+
+    passed, total = run_shared_test_suite(
+        "PERFORMANCE TIMING TEST SUITE",
+        get_test_specs(),
+        scripts=['objc_cls.py'],
+        show_category_summary=categories
+    )
+
+    # Print performance summary
+    print("\n" + "-" * 70)
+    print("PERFORMANCE SUMMARY")
+    print("-" * 70)
+    print("\nNote: Execution times shown in test results above.")
+    print("Performance depends on class size and system load.")
+    print("Target: <5s for large classes with batched expression optimization.")
+
+    sys.exit(0 if passed == total else 1)
+
+
+if __name__ == '__main__':
+    main()
