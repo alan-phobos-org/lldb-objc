@@ -10,6 +10,8 @@ Custom LLDB commands for working with Objective-C methods, including private sym
 - **ocall**: Call Objective-C methods directly from LLDB
 - **owatch**: Set auto-logging breakpoints to watch method calls
 - **oprotos**: Find protocol conformance across all classes
+- **opool**: Find instances of Objective-C classes in autorelease pools
+- **oinstance**: Inspect Objective-C object instances with detailed ivar information
 - Works with private classes and methods
 - Supports both instance methods (`-`) and class methods (`+`)
 - Runtime resolution using `NSClassFromString`, `NSSelectorFromString`, and `class_getMethodImplementation`
@@ -245,6 +247,89 @@ oprotos --list
 oprotos --list *Delegate
 oprotos --list NS*
 ```
+
+### opool - Find Instances in Autorelease Pools
+
+Find instances of an Objective-C class by scanning autorelease pools.
+
+**Syntax:**
+```
+opool [--verbose] ClassName  # Find instances in autorelease pools
+```
+
+**Examples:**
+```
+# Find all NSDate instances in pools
+opool NSDate
+
+# Find NSString instances
+opool NSString
+
+# Show full pool debug output while searching
+opool --verbose NSString
+
+# Works with instances created via ocall
+ocall +[NSDate date]
+opool NSDate           # Will find the date we just created
+
+# Find private class instances
+opool _NSInlineData
+```
+
+**Flags:**
+- `--verbose`: Show the raw pool contents from `_objc_autoreleasePoolPrint()` (normally suppressed)
+
+**Notes:**
+- Scans autorelease pools using `_objc_autoreleasePoolPrint()`
+- Pool debug output is suppressed by default; use `--verbose` to see it
+- Only finds instances that are currently in autorelease pools
+- Does not scan heap or LLDB variables
+- Automatically filters by class type using `isKindOfClass:`
+- Does not require heap.py, works on iOS and macOS
+
+### oinstance - Inspect Object Instances
+
+Inspect a specific Objective-C object instance, showing detailed information including class hierarchy, instance variables, and values.
+
+**Syntax:**
+```
+oinstance <address|$var|expression>      # Inspect object
+```
+
+**Examples:**
+```
+# Inspect a specific object by expression
+oinstance (id)[NSDate date]
+
+# Inspect by hex address
+oinstance 0x123456789abc
+
+# Inspect with LLDB variable
+oinstance $0
+oinstance self
+
+# Inspect shows: class name, description, hierarchy, and all instance variables with values
+```
+
+**Inspection Output Format:**
+```
+ClassName (0x123456789abc)
+  Object description here...
+
+  Class Hierarchy:
+    ClassName → SuperClass → NSObject
+
+  Instance Variables (3):
+    0x008  isa              0x00007fff12345678  Class (ClassName)
+    0x010  _someIvar        0x0000000000000042  66 (long long)
+    0x018  _objIvar         0x0000600000012340  <NSString instance>  (NSString)
+```
+
+**Notes:**
+- Shows full object details including ivars, class hierarchy, and values
+- Supports tagged pointers and regular heap objects
+- Decodes ivar values based on Objective-C type encodings
+- Works with any object address, variable, or expression
 
 ## How It Works
 

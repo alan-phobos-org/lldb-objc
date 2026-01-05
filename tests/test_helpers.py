@@ -8,6 +8,7 @@ Provides common utilities for:
 - Test result tracking with pytest-style output
 - Test timeout management (60-second max per test)
 - Shared LLDB session support for faster test execution
+- Python traceback detection for command script errors
 - Consolidated validator utilities to reduce duplication
 """
 
@@ -404,6 +405,11 @@ class SharedLLDBSession:
         # Strip ANSI escape sequences
         output = self._strip_ansi(output)
 
+        # Check for Python tracebacks/errors that indicate command script failures
+        if 'Traceback (most recent call last):' in output:
+            # Preserve the full traceback for debugging
+            return f"ERROR: Command script failed with exception:\n{output}"
+
         # Clean up the output
         lines = output.split('\n')
         filtered_lines = []
@@ -529,12 +535,16 @@ def run_shared_test_suite(name, test_specs, scripts=None, show_category_summary=
                 # Run commands and collect output
                 output = session.run_commands(commands)
 
-                # Validate results
-                passed, message = validator(output)
-                if passed:
-                    result.pass_(message)
+                # Check for command script errors
+                if output.startswith("ERROR: Command script failed"):
+                    result.fail("Command script error detected", detail=output)
                 else:
-                    result.fail(message, detail=output)
+                    # Validate results
+                    passed, message = validator(output)
+                    if passed:
+                        result.pass_(message)
+                    else:
+                        result.fail(message, detail=output)
 
             except Exception as e:
                 result.fail(f"EXCEPTION: {str(e)}", detail=str(e))

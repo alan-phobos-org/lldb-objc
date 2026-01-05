@@ -50,9 +50,6 @@ breakpoint delete 1
 
 # Load IDS.framework (this will load the Objective-C runtime and IDS private classes)
 expr (void)dlopen("/System/Library/PrivateFrameworks/IDS.framework/IDS", 0x2)
-
-# Ready message
-script print("\\n=== Ready! Commands: obrk, osel, ocls, ocall, owatch, oprotos ===")
 """
 
 # Write commands to a temporary file
