@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-01-12
+
+### Added
+- `--claude-haiku` flag for `oexplain` and `odecompile` commands
+- Automatic string literal resolution from disassembly addresses
+- Automatic selector resolution from disassembly addresses
+- Platform/architecture info included in LLM context
+
+### Changed
+- Improved LLM prompts with ARM64 calling convention notes
+
 ## [1.2.0] - 2026-01-12
 
 ### Added
@@ -101,7 +112,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Supports both instance methods (`-`) and class methods (`+`)
 - LLDB Python scripting API
 
-[Unreleased]: https://github.com/yourusername/lldb-objc/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/yourusername/lldb-objc/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/yourusername/lldb-objc/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/yourusername/lldb-objc/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/yourusername/lldb-objc/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/yourusername/lldb-objc/releases/tag/v1.0.0
