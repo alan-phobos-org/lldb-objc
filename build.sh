@@ -121,7 +121,7 @@ cmd_dist() {
 
     # Copy scripts
     cp "$ROOT_DIR/scripts/__init__.py" "$DIST_DIR/$PACKAGE_DIR/scripts/"
-    cp "$ROOT_DIR/scripts/objc_*.py" "$DIST_DIR/$PACKAGE_DIR/scripts/"
+    cp "$ROOT_DIR"/scripts/objc_*.py "$DIST_DIR/$PACKAGE_DIR/scripts/"
 
     # Generate version.py with embedded version
     cat > "$DIST_DIR/$PACKAGE_DIR/scripts/version.py" << EOF
