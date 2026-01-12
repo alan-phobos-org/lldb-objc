@@ -11,79 +11,90 @@ Uses a shared LLDB session for faster test execution.
 
 import sys
 import re
-from test_helpers import (
-    TestResult, check_hello_world_binary, run_shared_test_suite
-)
+from test_helpers import run_shared_test_suite
 
 
 # =============================================================================
 # Validator Functions
 # =============================================================================
 
+
 def validate_nsobject_performance():
     """Validator for NSObject performance."""
+
     def validator(output):
-        if 'NSObject' in output:
+        if "NSObject" in output:
             return True, "NSObject completed"
         return False, f"Failed: {output[:200]}"
+
     return validator
 
 
 def validate_nsstring_performance():
     """Validator for NSString performance."""
+
     def validator(output):
-        if 'NSString' in output:
+        if "NSString" in output:
             return True, "NSString completed"
         return False, f"Failed: {output[:200]}"
+
     return validator
 
 
 def validate_idsserviceproperties_performance():
     """Validator for IDSServiceProperties performance."""
+
     def validator(output):
         # Parse counts
-        ivars_match = re.search(r'Instance Variables \((\d+)\)', output)
-        props_match = re.search(r'Properties \((\d+)\)', output)
+        ivars_match = re.search(r"Instance Variables \((\d+)\)", output)
+        props_match = re.search(r"Properties \((\d+)\)", output)
 
         ivar_count = int(ivars_match.group(1)) if ivars_match else 0
         prop_count = int(props_match.group(1)) if props_match else 0
 
         if ivars_match or props_match:
             return True, f"{ivar_count} ivars, {prop_count} props"
-        elif 'not found' in output.lower():
+        elif "not found" in output.lower():
             return False, "IDSServiceProperties not found (framework may not be loaded)"
         return False, f"Failed: {output[:200]}"
+
     return validator
 
 
 def validate_ivars_only():
     """Validator for --ivars only performance."""
+
     def validator(output):
-        ivars_match = re.search(r'Instance Variables \((\d+)\)', output)
+        ivars_match = re.search(r"Instance Variables \((\d+)\)", output)
         if ivars_match:
             ivar_count = int(ivars_match.group(1))
             return True, f"{ivar_count} ivars"
         return False, f"Failed: {output[:200]}"
+
     return validator
 
 
 def validate_properties_only():
     """Validator for --properties only performance."""
+
     def validator(output):
-        props_match = re.search(r'Properties \((\d+)\)', output)
+        props_match = re.search(r"Properties \((\d+)\)", output)
         if props_match:
             prop_count = int(props_match.group(1))
             return True, f"{prop_count} properties"
         return False, f"Failed: {output[:200]}"
+
     return validator
 
 
 def validate_performance_target():
     """Validator for performance target."""
+
     def validator(output):
-        if 'Instance Variables' in output or 'Properties' in output:
+        if "Instance Variables" in output or "Properties" in output:
             return True, "Completed within shared session"
         return False, f"Command failed: {output[:200]}"
+
     return validator
 
 
@@ -91,41 +102,42 @@ def validate_performance_target():
 # Test Specifications
 # =============================================================================
 
+
 def get_test_specs():
     """Return list of test specifications."""
     return [
         # By class size
         (
             "Performance: NSObject",
-            ['ocls --ivars --properties NSObject'],
-            validate_nsobject_performance()
+            ["ocls --ivars --properties NSObject"],
+            validate_nsobject_performance(),
         ),
         (
             "Performance: NSString",
-            ['ocls --ivars --properties NSString'],
-            validate_nsstring_performance()
+            ["ocls --ivars --properties NSString"],
+            validate_nsstring_performance(),
         ),
         (
             "Performance: IDSServiceProperties",
-            ['ocls --ivars --properties IDSServiceProperties'],
-            validate_idsserviceproperties_performance()
+            ["ocls --ivars --properties IDSServiceProperties"],
+            validate_idsserviceproperties_performance(),
         ),
         # By flag
         (
             "Performance: --ivars only",
-            ['ocls --ivars IDSServiceProperties'],
-            validate_ivars_only()
+            ["ocls --ivars IDSServiceProperties"],
+            validate_ivars_only(),
         ),
         (
             "Performance: --properties only",
-            ['ocls --properties IDSServiceProperties'],
-            validate_properties_only()
+            ["ocls --properties IDSServiceProperties"],
+            validate_properties_only(),
         ),
         # Performance target
         (
             "Performance target: <5s for large class",
-            ['ocls --ivars --properties IDSServiceProperties'],
-            validate_performance_target()
+            ["ocls --ivars --properties IDSServiceProperties"],
+            validate_performance_target(),
         ),
     ]
 
@@ -142,8 +154,8 @@ def main():
     passed, total = run_shared_test_suite(
         "PERFORMANCE TIMING TEST SUITE",
         get_test_specs(),
-        scripts=['scripts/objc_cls.py'],
-        show_category_summary=categories
+        scripts=["scripts/objc_cls.py"],
+        show_category_summary=categories,
     )
 
     # Print performance summary
@@ -157,5 +169,5 @@ def main():
     sys.exit(0 if passed == total else 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

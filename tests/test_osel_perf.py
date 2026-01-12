@@ -24,21 +24,20 @@ Test classes with varying method counts:
 
 import sys
 import re
-import time
-from test_helpers import (
-    TestResult, check_hello_world_binary, run_shared_test_suite, SharedLLDBSession
-)
+from test_helpers import run_shared_test_suite
 
 
 # =============================================================================
 # Validator Functions
 # =============================================================================
 
+
 def validate_basic_functionality():
     """Validator for basic osel functionality."""
+
     def validator(output):
-        if 'Instance methods' in output and 'Class methods' in output:
-            total_match = re.search(r'Total: (\d+)', output)
+        if "Instance methods" in output and "Class methods" in output:
+            total_match = re.search(r"Total: (\d+)", output)
             if total_match:
                 count = int(total_match.group(1))
                 if count > 0:
@@ -46,110 +45,128 @@ def validate_basic_functionality():
                 return False, "No methods found"
             return True, "Found methods"
         return False, f"Expected method listing: {output[:300]}"
+
     return validator
 
 
 def validate_pattern_matching():
     """Validator for pattern matching."""
+
     def validator(output):
-        if 'init' in output.lower():
-            init_count = output.lower().count('init')
+        if "init" in output.lower():
+            init_count = output.lower().count("init")
             return True, f"Pattern matching works, found ~{init_count} init methods"
         return False, f"Pattern matching may be broken: {output[:300]}"
+
     return validator
 
 
 def validate_performance_small():
     """Validator for small class performance."""
+
     def validator(output):
-        if 'Instance methods' in output or 'Class methods' in output:
+        if "Instance methods" in output or "Class methods" in output:
             return True, "Small class enumerated"
         return False, f"Failed: {output[:300]}"
+
     return validator
 
 
 def validate_performance_medium():
     """Validator for medium class performance."""
+
     def validator(output):
-        if 'Instance methods' in output or 'Class methods' in output:
-            total_match = re.search(r'Total: (\d+)', output)
+        if "Instance methods" in output or "Class methods" in output:
+            total_match = re.search(r"Total: (\d+)", output)
             if total_match:
                 count = int(total_match.group(1))
                 return True, f"Medium class: {count} methods"
             return True, "Medium class enumerated"
         return False, f"Failed: {output[:300]}"
+
     return validator
 
 
 def validate_performance_large():
     """Validator for large class performance."""
+
     def validator(output):
         # UIViewController may not be available in command-line binaries
-        if 'not found' in output.lower():
+        if "not found" in output.lower():
             return True, "UIViewController not available (skipped - UIKit not loaded)"
-        if 'Instance methods' in output or 'Class methods' in output:
-            total_match = re.search(r'Total: (\d+)', output)
+        if "Instance methods" in output or "Class methods" in output:
+            total_match = re.search(r"Total: (\d+)", output)
             if total_match:
                 count = int(total_match.group(1))
                 return True, f"Large class: {count} methods"
             return True, "Large class enumerated"
         return False, f"Failed: {output[:300]}"
+
     return validator
 
 
 def validate_private_class():
     """Validator for private class performance."""
+
     def validator(output):
-        if 'Instance methods' in output or 'Class methods' in output:
+        if "Instance methods" in output or "Class methods" in output:
             return True, "Private class enumerated"
-        elif 'not found' in output.lower():
+        elif "not found" in output.lower():
             return False, "IDSService not found (framework not loaded)"
         return False, f"Unexpected output: {output[:300]}"
+
     return validator
 
 
 def validate_caching_first():
     """Validator for first run (cache population)."""
+
     def validator(output):
-        if 'Instance methods' in output:
+        if "Instance methods" in output:
             return True, "First run completed"
         return False, "First run failed"
+
     return validator
 
 
 def validate_caching_second():
     """Validator for second run (cache hit)."""
+
     def validator(output):
         # Both runs should complete; if caching works, second should be faster
         # We just verify both complete successfully
-        if output.count('Instance methods') >= 2:
+        if output.count("Instance methods") >= 2:
             return True, "Both runs completed (caching may speed up second)"
-        elif 'Instance methods' in output:
+        elif "Instance methods" in output:
             return True, "Command works (caching behavior not verified)"
         return False, f"Unexpected output: {output[:300]}"
+
     return validator
 
 
 def validate_verbose_timing():
     """Validator for verbose timing output."""
+
     def validator(output):
-        has_expr_count = 'expression' in output.lower()
-        has_mem_count = 'memory' in output.lower() or 'read' in output.lower()
-        has_timing = re.search(r'\d+\.\d+s', output) is not None
+        has_expr_count = "expression" in output.lower()
+        has_mem_count = "memory" in output.lower() or "read" in output.lower()
+        has_timing = re.search(r"\d+\.\d+s", output) is not None
 
         if has_expr_count or has_mem_count or has_timing:
             return True, "Performance metrics shown in output"
-        elif 'Instance methods' in output:
+        elif "Instance methods" in output:
             return True, "Works but verbose metrics not implemented yet"
         return False, f"Unexpected output: {output[:300]}"
+
     return validator
 
 
 def validate_expression_reduction():
     """Validator for expression count reduction."""
+
     def validator(output):
-        expr_match = re.search(r'(\d+)\s*expressions?', output, re.IGNORECASE)
-        method_match = re.search(r'Total: (\d+) method', output)
+        expr_match = re.search(r"(\d+)\s*expressions?", output, re.IGNORECASE)
+        method_match = re.search(r"Total: (\d+) method", output)
 
         if expr_match and method_match:
             expr_count = int(expr_match.group(1))
@@ -157,11 +174,18 @@ def validate_expression_reduction():
             ratio = expr_count / (2 * method_count) if method_count > 0 else 1
 
             if ratio < 0.5:
-                return True, f"Expression count reduced: {expr_count} for {method_count} methods (ratio: {ratio:.2f})"
-            return False, f"Expression count not reduced: {expr_count} for {method_count} methods"
-        elif 'Instance methods' in output:
+                return (
+                    True,
+                    f"Expression count reduced: {expr_count} for {method_count} methods (ratio: {ratio:.2f})",
+                )
+            return (
+                False,
+                f"Expression count not reduced: {expr_count} for {method_count} methods",
+            )
+        elif "Instance methods" in output:
             return True, "Command works (expression count metrics not available)"
         return False, "Could not verify expression count"
+
     return validator
 
 
@@ -169,62 +193,59 @@ def validate_expression_reduction():
 # Test Specifications
 # =============================================================================
 
+
 def get_test_specs():
     """Return list of test specifications."""
     return [
         # Functionality tests
         (
             "Basic functionality preserved",
-            ['osel NSString'],
-            validate_basic_functionality()
+            ["osel NSString"],
+            validate_basic_functionality(),
         ),
         (
             "Pattern matching preserved",
-            ['osel NSString *init*'],
-            validate_pattern_matching()
+            ["osel NSString *init*"],
+            validate_pattern_matching(),
         ),
         # Performance by class size
         (
             "Performance: NSObject (small)",
-            ['osel NSObject'],
-            validate_performance_small()
+            ["osel NSObject"],
+            validate_performance_small(),
         ),
         (
             "Performance: NSString (medium)",
-            ['osel NSString'],
-            validate_performance_medium()
+            ["osel NSString"],
+            validate_performance_medium(),
         ),
         (
             "Performance: UIViewController (large)",
-            ['osel UIViewController'],
-            validate_performance_large()
+            ["osel UIViewController"],
+            validate_performance_large(),
         ),
         (
             "Performance: IDSService (private)",
-            ['osel IDSService'],
-            validate_private_class()
+            ["osel IDSService"],
+            validate_private_class(),
         ),
         # Caching tests
-        (
-            "Caching: First run",
-            ['osel NSString'],
-            validate_caching_first()
-        ),
+        ("Caching: First run", ["osel NSString"], validate_caching_first()),
         (
             "Caching: Second run (if implemented)",
-            ['osel NSString', 'osel NSString'],
-            validate_caching_second()
+            ["osel NSString", "osel NSString"],
+            validate_caching_second(),
         ),
         # Verbose/metrics tests
         (
             "Verbose timing metrics",
-            ['osel --verbose NSString'],
-            validate_verbose_timing()
+            ["osel --verbose NSString"],
+            validate_verbose_timing(),
         ),
         (
             "Expression count reduction",
-            ['osel --verbose NSString'],
-            validate_expression_reduction()
+            ["osel --verbose NSString"],
+            validate_expression_reduction(),
         ),
     ]
 
@@ -242,8 +263,8 @@ def main():
     passed, total = run_shared_test_suite(
         "OSEL PERFORMANCE OPTIMIZATION TEST SUITE",
         get_test_specs(),
-        scripts=['scripts/objc_sel.py'],
-        show_category_summary=categories
+        scripts=["scripts/objc_sel.py"],
+        show_category_summary=categories,
     )
 
     # Performance summary
@@ -256,5 +277,5 @@ def main():
     sys.exit(0 if passed == total else 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

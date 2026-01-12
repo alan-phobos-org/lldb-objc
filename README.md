@@ -21,20 +21,20 @@ Custom LLDB commands for working with Objective-C methods, including private sym
 
 ### Quick Install (Recommended)
 
-Run the installation script to automatically configure your `~/.lldbinit`:
+Run the installation script to copy scripts to `~/.lldb-objc/` and configure your `~/.lldbinit`:
 
 ```bash
 cd /path/to/lldb-objc
 ./install.py
 ```
 
-This will add the necessary commands to your `~/.lldbinit` file. The commands will be available automatically whenever you start LLDB.
+Scripts are installed to `~/.lldb-objc/scripts/` for a stable path. The commands will be available automatically whenever you start LLDB.
 
 **Installation Commands:**
 ```bash
-./install.py              # Install to ~/.lldbinit
+./install.py              # Install to ~/.lldb-objc and update ~/.lldbinit
 ./install.py --status     # Check installation status
-./install.py --uninstall  # Remove from ~/.lldbinit
+./install.py --uninstall  # Remove ~/.lldb-objc and clean ~/.lldbinit
 ```
 
 ### Manual Installation
@@ -359,10 +359,16 @@ ClassName (0x123456789abc)
 
 ## Testing
 
-Test files can be found in the [tests/](tests/) directory. Run all tests with:
+Install dev dependencies first:
 ```bash
-./tests/run_all_tests.py          # Run all tests
-./tests/run_all_tests.py --quick  # Run quick subset only
+pip install -r requirements-dev.txt
+```
+
+Run tests:
+```bash
+pytest                            # Unit tests (fast)
+./tests/run_all_tests.py          # Integration tests
+./tests/run_all_tests.py --quick  # Quick subset only
 ```
 
 See [tests/test_runner.md](tests/test_runner.md) for more details on the test framework.
@@ -371,6 +377,113 @@ See [tests/test_runner.md](tests/test_runner.md) for more details on the test fr
 
 The [examples/](examples/) directory contains sample projects for testing:
 - [HelloWorld](examples/HelloWorld/) - Simple Xcode project for testing LLDB commands
+
+## Configuring the LLM CLI Tool
+
+The `oexplain` command uses Simon Willison's [llm](https://github.com/simonw/llm) command line tool. Here's how to configure it:
+
+### Installing llm
+
+```bash
+pip install llm
+```
+
+### Setting the Default Model
+
+View the current default model:
+```bash
+llm models default
+```
+
+Set a new default model:
+```bash
+llm models default gpt-4o
+```
+
+### Setting API Keys
+
+For OpenAI:
+```bash
+llm keys set openai
+# Paste your API key when prompted
+```
+
+For other providers, use the appropriate key name:
+```bash
+llm keys set anthropic
+llm keys set openrouter
+```
+
+Alternatively, set the API key via environment variable:
+```bash
+export OPENAI_API_KEY="sk-your-key-here"
+```
+
+### Configuring an OpenAI-Compatible Endpoint
+
+To use a custom OpenAI-compatible endpoint (e.g., a local proxy or alternative model), create or edit the `extra-openai-models.yaml` file:
+
+```bash
+# Find the configuration directory
+llm logs path
+# The extra-openai-models.yaml file goes in the same directory
+```
+
+Add your configuration to `extra-openai-models.yaml`:
+
+```yaml
+- model_id: my-proxy-model
+  model_name: gpt-4o
+  api_base: "http://localhost:8080/v1"
+  api_key_name: my-proxy-key
+```
+
+Example configuration for `gpt-oss-120b` via a local proxy:
+
+```yaml
+- model_id: gpt-oss-120b
+  model_name: gpt-oss-120b
+  api_base: "http://localhost:8080/v1"
+  api_key_name: openai
+```
+
+Example configuration for `gpt-oss-120b` via the official OpenAI endpoint:
+
+```yaml
+- model_id: gpt-oss-120b
+  model_name: gpt-oss-120b
+  api_base: "https://api.openai.com/v1"
+  api_key_name: openai
+```
+
+Configuration options:
+- `model_id`: The name you'll use to reference this model in llm
+- `model_name`: The model identifier to pass to the API
+- `api_base`: The API endpoint URL
+- `api_key_name`: Name of the stored API key to use (set with `llm keys set <name>`)
+
+Set the API key for your endpoint:
+```bash
+llm keys set my-proxy-key
+# Paste your API key when prompted
+```
+
+Use the configured model:
+```bash
+llm -m my-proxy-model "your prompt here"
+```
+
+Or set it as the default:
+```bash
+llm models default my-proxy-model
+```
+
+Verify your configuration:
+```bash
+llm models --options -m my-proxy-model
+```
+
+For more details, see the [llm documentation](https://llm.datasette.io/en/stable/other-models.html#openai-compatible-models).
 
 ## oexplain Benchmarks
 

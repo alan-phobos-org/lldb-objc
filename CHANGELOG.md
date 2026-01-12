@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-01-12
+
+### Added
+- `oexplain` command for LLM-based disassembly explanation
+  - `--annotate` flag for line-by-line annotation
+  - `--claude` flag to use Claude CLI instead of llm
+- `odecompile` command for LLM-based decompilation
+  - Generates readable pseudo-code from disassembly
+  - `--claude` flag to use Claude CLI instead of llm
+- `opool` command to find instances in autorelease pools
+  - `--verbose` flag to show pool contents while searching
+- `oinstance` command for detailed object inspection
+  - Supports address, $variable, or expression syntax
+- Shared LLM utilities (`objc_llm.py`) for symbol lookup and CLI wrappers
+- Pure Python core module (`objc_core.py`) for unit testable logic
+- Unit test suite with pytest in `tests/unit/`
+- Build script (`build.sh`) with standardized commands
+- Git-based versioning (version derived from tags)
+
+### Changed
+- Separated LLDB-dependent code (`objc_utils.py`) from pure Python (`objc_core.py`)
+- Replaced `package.py` with `build.sh package` command
+- Added release workflow: `prepare-release` and `release X.Y.Z` commands
+
 ## [1.1.0] - 2025-12-31
 
 ### Added
@@ -77,6 +101,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Supports both instance methods (`-`) and class methods (`+`)
 - LLDB Python scripting API
 
-[Unreleased]: https://github.com/yourusername/lldb-objc/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/yourusername/lldb-objc/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/yourusername/lldb-objc/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/yourusername/lldb-objc/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/yourusername/lldb-objc/releases/tag/v1.0.0

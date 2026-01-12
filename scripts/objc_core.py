@@ -41,7 +41,9 @@ def unquote_string(s: Optional[str]) -> Optional[str]:
     return s
 
 
-def parse_method_signature(command: str) -> Tuple[Optional[bool], Optional[str], Optional[str], Optional[str]]:
+def parse_method_signature(
+    command: str,
+) -> Tuple[Optional[bool], Optional[str], Optional[str], Optional[str]]:
     """
     Parse a method signature like -[ClassName selector:], +[ClassName selector:], or [ClassName selector:]
 
@@ -56,20 +58,25 @@ def parse_method_signature(command: str) -> Tuple[Optional[bool], Optional[str],
     command = command.strip()
 
     # Determine method type based on prefix
-    if command.startswith('-['):
+    if command.startswith("-["):
         is_instance_method = True
         start_idx = 2
-    elif command.startswith('+['):
+    elif command.startswith("+["):
         is_instance_method = False
         start_idx = 2
-    elif command.startswith('['):
+    elif command.startswith("["):
         is_instance_method = None  # Signal auto-detect needed
         start_idx = 1
     else:
-        return None, None, None, "Expected -[ClassName selector:], +[ClassName selector:], or [ClassName selector:]"
+        return (
+            None,
+            None,
+            None,
+            "Expected -[ClassName selector:], +[ClassName selector:], or [ClassName selector:]",
+        )
 
     # Remove the leading prefix and trailing ]
-    method_str = command[start_idx:-1] if command.endswith(']') else command[start_idx:]
+    method_str = command[start_idx:-1] if command.endswith("]") else command[start_idx:]
     parts = method_str.split(None, 1)  # Split on first whitespace
 
     if len(parts) != 2:
@@ -93,15 +100,12 @@ def format_method_name(class_name: str, selector: str, is_instance_method: bool)
     Returns:
         Formatted string like "-[NSString length]" or "+[NSDate date]"
     """
-    prefix = '-' if is_instance_method else '+'
+    prefix = "-" if is_instance_method else "+"
     return f"{prefix}[{class_name} {selector}]"
 
 
 def extract_inherited_class(
-    symbol_name: str,
-    requested_class: str,
-    selector: str,
-    is_instance_method: bool
+    symbol_name: str, requested_class: str, selector: str, is_instance_method: bool
 ) -> Optional[str]:
     """
     Check if a symbol indicates the method is inherited from a superclass.
@@ -117,8 +121,7 @@ def extract_inherited_class(
     """
     # Match Objective-C method symbol: +[ClassName selector] or -[ClassName selector]
     # The selector part can contain colons and arguments
-    prefix = '-' if is_instance_method else '+'
-    pattern = rf'^[+-]\[(\w+)\s+(.+)\]$'
+    pattern = r"^[+-]\[(\w+)\s+(.+)\]$"
     match = re.match(pattern, symbol_name)
 
     if match:
@@ -134,7 +137,9 @@ def extract_inherited_class(
     return None
 
 
-def extract_category_from_symbol(symbol_name: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+def extract_category_from_symbol(
+    symbol_name: str,
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """
     Extract class name, category name, and selector from an Objective-C symbol.
 
@@ -146,7 +151,7 @@ def extract_category_from_symbol(symbol_name: str) -> Tuple[Optional[str], Optio
         category_name is None if the method is not from a category
     """
     # Match: +/-[ClassName(CategoryName) selector] or +/-[ClassName selector]
-    pattern = r'^[+-]\[(\w+)(?:\((\w+)\))?\s+(.+)\]$'
+    pattern = r"^[+-]\[(\w+)(?:\((\w+)\))?\s+(.+)\]$"
     match = re.match(pattern, symbol_name)
 
     if match:

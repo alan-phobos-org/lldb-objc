@@ -75,7 +75,7 @@ try:
 except ImportError:
     __version__ = "unknown"
 
-from objc_utils import unquote_string
+from objc_core import unquote_string
 
 # Type aliases
 TimingDict = Dict[str, Any]
@@ -90,7 +90,7 @@ def find_objc_classes(
     debugger: lldb.SBDebugger,
     command: str,
     result: lldb.SBCommandReturnObject,
-    internal_dict: Dict[str, Any]
+    internal_dict: Dict[str, Any],
 ) -> None:
     """
     Find Objective-C classes matching a wildcard pattern.
@@ -112,13 +112,14 @@ def find_objc_classes(
         result.SetError("Process must be running and stopped")
         return
 
-    # Parse the input: [--reload] [--clear-cache] [--batch-size=N] [--verbose] [--ivars] [--properties] [--dylib pattern] [pattern]
+    # Parse input: [--reload] [--clear-cache] [--batch-size=N] [--verbose]
+    # [--ivars] [--properties] [--dylib pattern] [pattern]
     args = command.strip().split()
-    force_reload = '--reload' in args
-    clear_cache = '--clear-cache' in args
-    verbose = '--verbose' in args
-    show_ivars = '--ivars' in args
-    show_properties = '--properties' in args
+    force_reload = "--reload" in args
+    clear_cache = "--clear-cache" in args
+    verbose = "--verbose" in args
+    show_ivars = "--ivars" in args
+    show_properties = "--properties" in args
 
     # Parse batch size and dylib filter
     batch_size = DEFAULT_BATCH_SIZE
@@ -126,16 +127,16 @@ def find_objc_classes(
     i = 0
     while i < len(args):
         arg = args[i]
-        if arg.startswith('--batch-size='):
+        if arg.startswith("--batch-size="):
             # Format: --batch-size=50
             try:
-                batch_size = int(arg.split('=')[1])
+                batch_size = int(arg.split("=")[1])
                 if batch_size < 1:
                     batch_size = DEFAULT_BATCH_SIZE
                     print(f"Warning: Invalid batch size, using default {DEFAULT_BATCH_SIZE}")
             except ValueError:
                 print(f"Warning: Invalid batch size format, using default {DEFAULT_BATCH_SIZE}")
-        elif arg == '--batch-size' and i + 1 < len(args):
+        elif arg == "--batch-size" and i + 1 < len(args):
             # Format: --batch-size 50
             try:
                 batch_size = int(args[i + 1])
@@ -146,10 +147,10 @@ def find_objc_classes(
                 i += 1
             except ValueError:
                 print(f"Warning: Invalid batch size format, using default {DEFAULT_BATCH_SIZE}")
-        elif arg.startswith('--dylib='):
+        elif arg.startswith("--dylib="):
             # Format: --dylib=*Foundation*
-            dylib_filter = arg.split('=', 1)[1]
-        elif arg == '--dylib' and i + 1 < len(args):
+            dylib_filter = arg.split("=", 1)[1]
+        elif arg == "--dylib" and i + 1 < len(args):
             # Format: --dylib *Foundation*
             dylib_filter = args[i + 1]
             i += 1
@@ -160,9 +161,9 @@ def find_objc_classes(
     i = 0
     while i < len(args):
         arg = args[i]
-        if arg.startswith('--'):
+        if arg.startswith("--"):
             # Skip flag
-            if arg in ['--batch-size', '--dylib'] and i + 1 < len(args):
+            if arg in ["--batch-size", "--dylib"] and i + 1 < len(args):
                 # Skip the next argument too (it's the value)
                 i += 1
         else:
@@ -171,7 +172,7 @@ def find_objc_classes(
 
     # Get pattern, treating empty string as "no pattern" (list all)
     pattern = pattern_args[0] if pattern_args else None
-    if pattern == '' or pattern == '""':
+    if pattern == "" or pattern == '""':
         pattern = None
 
     # Handle cache clearing
@@ -249,7 +250,7 @@ def find_objc_classes(
                     else:
                         print(f"    \033[90m     \033[0m  {ivar_name}  \033[90m{ivar_type}\033[0m")
             else:
-                print(f"\n  Instance Variables: none")
+                print("\n  Instance Variables: none")
 
         # Show properties if --properties flag is present
         if show_properties:
@@ -263,12 +264,12 @@ def find_objc_classes(
                     # Format: name (normal) + type and attributes (dim gray)
                     # ANSI escape codes: \033[90m = bright black (dim gray), \033[0m = reset
                     if attrs_list:
-                        attrs_str = ', '.join(attrs_list)
+                        attrs_str = ", ".join(attrs_list)
                         print(f"    {prop_name} \033[90m{type_str} ({attrs_str})\033[0m")
                     else:
                         print(f"    {prop_name} \033[90m{type_str}\033[0m")
             else:
-                print(f"\n  Properties: none")
+                print("\n  Properties: none")
 
     elif num_matches <= 20:
         # 2-20 matches: Show compact one-liner with hierarchy for each
@@ -302,7 +303,7 @@ def find_objc_classes(
 
     # Print timing metrics only when wildcards are involved or listing all classes
     # (no point showing metrics for exact single class match via fast-path)
-    has_wildcards = pattern and ('*' in pattern or '?' in pattern)
+    has_wildcards = pattern and ("*" in pattern or "?" in pattern)
     show_metrics = verbose or has_wildcards or pattern is None or dylib_filter
 
     if show_metrics:
@@ -311,22 +312,26 @@ def find_objc_classes(
             # Detailed output
             print(f"{'─' * 70}")
             if from_cache:
-                print(f"Performance Summary: (from cache)")
+                print("Performance Summary: (from cache)")
                 print(f"  Total time:     {timing['total']:.3f}s")
                 print(f"  Classes:        {class_count:,} total, {len(class_names):,} matched")
-                print(f"  Source:         Cached (use --reload to refresh)")
+                print("  Source:         Cached (use --reload to refresh)")
             else:
-                print(f"Performance Summary:")
+                print("Performance Summary:")
                 print(f"  Total time:     {timing['total']:.2f}s")
                 print(f"  Classes:        {class_count:,} total, {len(class_names):,} matched")
                 print(f"  Throughput:     {class_count / timing['total']:.0f} classes/sec")
                 print(f"  Batch size:     {batch_size}")
-                print(f"\n  Timing breakdown:")
+                print("\n  Timing breakdown:")
                 print(f"    Setup:        {timing['setup']:.2f}s ({timing['setup'] / timing['total'] * 100:.1f}%)")
-                print(f"    Bulk read:    {timing['bulk_read']:.2f}s ({timing['bulk_read'] / timing['total'] * 100:.1f}%)")
-                print(f"    Batching:     {timing['batching']:.2f}s ({timing['batching'] / timing['total'] * 100:.1f}%)")
+                print(
+                    f"    Bulk read:    {timing['bulk_read']:.2f}s ({timing['bulk_read'] / timing['total'] * 100:.1f}%)"
+                )
+                print(
+                    f"    Batching:     {timing['batching']:.2f}s ({timing['batching'] / timing['total'] * 100:.1f}%)"
+                )
                 print(f"    Cleanup:      {timing['cleanup']:.2f}s ({timing['cleanup'] / timing['total'] * 100:.1f}%)")
-                print(f"\n  Resource usage:")
+                print("\n  Resource usage:")
                 print(f"    Expressions:  {timing['expression_count']:,}")
                 print(f"    Memory reads: {timing['memory_read_count']:,}")
             print(f"{'─' * 70}")
@@ -335,9 +340,14 @@ def find_objc_classes(
             if from_cache:
                 print(f"[{class_count:,} total | {len(class_names):,} matched | {timing['total']:.3f}s | cached]")
             else:
-                print(f"[{class_count:,} total | {len(class_names):,} matched | {timing['total']:.2f}s | {class_count / timing['total']:.0f} classes/sec]")
+                rate = class_count / timing["total"]
+                print(
+                    f"[{class_count:,} total | {len(class_names):,} matched "
+                    f"| {timing['total']:.2f}s | {rate:.0f} classes/sec]"
+                )
 
     result.SetStatus(lldb.eReturnStatusSuccessFinishResult)
+
 
 def get_class_image_path(frame: lldb.SBFrame, class_name: str) -> Optional[str]:
     """
@@ -364,7 +374,7 @@ def get_class_image_path(frame: lldb.SBFrame, class_name: str) -> Optional[str]:
         return None
 
     # Get the image name using class_getImageName
-    image_expr = f'(const char *)class_getImageName((Class)0x{class_ptr:x})'
+    image_expr = f"(const char *)class_getImageName((Class)0x{class_ptr:x})"
     image_result = frame.EvaluateExpression(image_expr)
 
     if not image_result.IsValid() or image_result.GetError().Fail():
@@ -408,7 +418,7 @@ def get_class_hierarchy(frame: lldb.SBFrame, class_name: str) -> List[str]:
     max_depth = 20  # Prevent infinite loops
     for _ in range(max_depth):
         # Get current class name
-        name_expr = f'(const char *)class_getName((void *)0x{current_class:x})'
+        name_expr = f"(const char *)class_getName((void *)0x{current_class:x})"
         name_result = frame.EvaluateExpression(name_expr)
 
         if not name_result.IsValid() or name_result.GetError().Fail():
@@ -422,7 +432,7 @@ def get_class_hierarchy(frame: lldb.SBFrame, class_name: str) -> List[str]:
             break
 
         # Get superclass
-        super_expr = f'(void *)class_getSuperclass((void *)0x{current_class:x})'
+        super_expr = f"(void *)class_getSuperclass((void *)0x{current_class:x})"
         super_result = frame.EvaluateExpression(super_expr)
 
         if not super_result.IsValid() or super_result.GetError().Fail():
@@ -467,7 +477,7 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
         return []
 
     # We need to allocate memory for the count
-    count_var_expr = f'(unsigned int *)malloc(sizeof(unsigned int))'
+    count_var_expr = "(unsigned int *)malloc(sizeof(unsigned int))"
     count_var_result = frame.EvaluateExpression(count_var_expr)
 
     if not count_var_result.IsValid() or count_var_result.GetError().Fail():
@@ -476,29 +486,29 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
     count_var_ptr = count_var_result.GetValueAsUnsigned()
 
     # Get ivar list
-    ivar_list_expr = f'(void *)class_copyIvarList((Class)0x{class_ptr:x}, (unsigned int *)0x{count_var_ptr:x})'
+    ivar_list_expr = f"(void *)class_copyIvarList((Class)0x{class_ptr:x}, (unsigned int *)0x{count_var_ptr:x})"
     ivar_list_result = frame.EvaluateExpression(ivar_list_expr)
 
     if not ivar_list_result.IsValid() or ivar_list_result.GetError().Fail():
-        frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
+        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
         return []
 
     ivar_list_ptr = ivar_list_result.GetValueAsUnsigned()
 
     # Read the count
-    count_read_expr = f'(unsigned int)(*(unsigned int *)0x{count_var_ptr:x})'
+    count_read_expr = f"(unsigned int)(*(unsigned int *)0x{count_var_ptr:x})"
     count_read_result = frame.EvaluateExpression(count_read_expr)
 
     if not count_read_result.IsValid() or count_read_result.GetError().Fail():
         if ivar_list_ptr != 0:
-            frame.EvaluateExpression(f'(void)free((void *)0x{ivar_list_ptr:x})')
-        frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
+            frame.EvaluateExpression(f"(void)free((void *)0x{ivar_list_ptr:x})")
+        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
         return []
 
     ivar_count = count_read_result.GetValueAsUnsigned()
 
     if ivar_count == 0 or ivar_list_ptr == 0:
-        frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
+        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
         return []
 
     # Read ivar list as array of pointers
@@ -511,15 +521,15 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
 
     if not error.Success():
         if ivar_list_ptr != 0:
-            frame.EvaluateExpression(f'(void)free((void *)0x{ivar_list_ptr:x})')
-        frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
+            frame.EvaluateExpression(f"(void)free((void *)0x{ivar_list_ptr:x})")
+        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
         return []
 
     # Parse ivar pointers
     if pointer_size == 8:
-        format_str = f'{ivar_count}Q'
+        format_str = f"{ivar_count}Q"
     else:
-        format_str = f'{ivar_count}I'
+        format_str = f"{ivar_count}I"
 
     ivar_pointers = struct.unpack(format_str, ivar_array_bytes)
 
@@ -530,30 +540,30 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
     # Build a batched expression that gets all info for all ivars at once
     info_struct_size = ivar_count * 3 * 8  # 3 pointers per ivar (name, type, offset as ptr)
 
-    batch_expr = f'''
+    batch_expr = f"""
 (void *)(^{{
     void **info = (void **)malloc({info_struct_size});
     if (!info) return (void *)0;
-    '''
+    """
 
     for i, ivar_ptr in enumerate(ivar_pointers):
         if ivar_ptr != 0:
-            batch_expr += f'''
+            batch_expr += f"""
     info[{i * 3}] = (void *)ivar_getName((void *)0x{ivar_ptr:x});
     info[{i * 3 + 1}] = (void *)ivar_getTypeEncoding((void *)0x{ivar_ptr:x});
     info[{i * 3 + 2}] = (void *)ivar_getOffset((void *)0x{ivar_ptr:x});
-'''
+"""
         else:
-            batch_expr += f'''
+            batch_expr += f"""
     info[{i * 3}] = (void *)0;
     info[{i * 3 + 1}] = (void *)0;
     info[{i * 3 + 2}] = (void *)0;
-'''
+"""
 
-    batch_expr += '''
+    batch_expr += """
     return (void *)info;
 }())
-'''
+"""
 
     # Execute the batch expression
     batch_result = frame.EvaluateExpression(batch_expr)
@@ -569,9 +579,9 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
             if error.Success():
                 # Parse the pointers
                 if pointer_size == 8:
-                    info_pointers = struct.unpack(f'{ivar_count * 3}Q', info_bytes)
+                    info_pointers = struct.unpack(f"{ivar_count * 3}Q", info_bytes)
                 else:
-                    info_pointers = struct.unpack(f'{ivar_count * 3}I', info_bytes)
+                    info_pointers = struct.unpack(f"{ivar_count * 3}I", info_bytes)
 
                 # Now read strings from memory using the pointers
                 for i in range(ivar_count):
@@ -601,7 +611,7 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
                     ivars.append((ivar_name, ivar_type, ivar_offset))
 
             # Free the info struct
-            frame.EvaluateExpression(f'(void)free((void *)0x{info_ptr:x})')
+            frame.EvaluateExpression(f"(void)free((void *)0x{info_ptr:x})")
     else:
         # Fallback to individual calls
         for ivar_ptr in ivar_pointers:
@@ -609,7 +619,7 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
                 continue
 
             # Get ivar name
-            name_expr = f'(const char *)ivar_getName((void *)0x{ivar_ptr:x})'
+            name_expr = f"(const char *)ivar_getName((void *)0x{ivar_ptr:x})"
             name_result = frame.EvaluateExpression(name_expr)
 
             if not name_result.IsValid() or name_result.GetError().Fail():
@@ -624,7 +634,7 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
                 continue
 
             # Get ivar type encoding
-            type_expr = f'(const char *)ivar_getTypeEncoding((void *)0x{ivar_ptr:x})'
+            type_expr = f"(const char *)ivar_getTypeEncoding((void *)0x{ivar_ptr:x})"
             type_result = frame.EvaluateExpression(type_expr)
 
             if not type_result.IsValid() or type_result.GetError().Fail():
@@ -642,7 +652,7 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
                     ivar_type = "?"
 
             # Get ivar offset
-            offset_expr = f'(ptrdiff_t)ivar_getOffset((void *)0x{ivar_ptr:x})'
+            offset_expr = f"(ptrdiff_t)ivar_getOffset((void *)0x{ivar_ptr:x})"
             offset_result = frame.EvaluateExpression(offset_expr)
 
             if not offset_result.IsValid() or offset_result.GetError().Fail():
@@ -654,8 +664,8 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
 
     # Clean up
     if ivar_list_ptr != 0:
-        frame.EvaluateExpression(f'(void)free((void *)0x{ivar_list_ptr:x})')
-    frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
+        frame.EvaluateExpression(f"(void)free((void *)0x{ivar_list_ptr:x})")
+    frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
 
     return ivars
 
@@ -690,7 +700,7 @@ def parse_property_attributes(attr_string: str) -> Dict[str, Any]:
         return ("?", [])
 
     # Split by comma
-    parts = attr_string.split(',')
+    parts = attr_string.split(",")
 
     type_string = "?"
     attributes = []
@@ -702,37 +712,37 @@ def parse_property_attributes(attr_string: str) -> Dict[str, Any]:
         if not part:
             continue
 
-        if part.startswith('T'):
+        if part.startswith("T"):
             # Type encoding
             type_enc = part[1:]
             type_string = decode_type_encoding(type_enc)
-        elif part.startswith('V'):
+        elif part.startswith("V"):
             # Instance variable name
             ivar_name = part[1:]
-        elif part.startswith('G'):
+        elif part.startswith("G"):
             # Custom getter
             getter_name = part[1:]
-        elif part.startswith('S'):
+        elif part.startswith("S"):
             # Custom setter
             setter_name = part[1:]
-        elif part == 'R':
-            attributes.append('readonly')
-        elif part == 'C':
-            attributes.append('copy')
-        elif part == '&':
-            attributes.append('strong')
-        elif part == 'N':
-            attributes.append('nonatomic')
-        elif part == 'D':
-            attributes.append('dynamic')
-        elif part == 'W':
-            attributes.append('weak')
+        elif part == "R":
+            attributes.append("readonly")
+        elif part == "C":
+            attributes.append("copy")
+        elif part == "&":
+            attributes.append("strong")
+        elif part == "N":
+            attributes.append("nonatomic")
+        elif part == "D":
+            attributes.append("dynamic")
+        elif part == "W":
+            attributes.append("weak")
 
     # Add custom getter/setter if present
     if getter_name:
-        attributes.append(f'getter={getter_name}')
+        attributes.append(f"getter={getter_name}")
     if setter_name:
-        attributes.append(f'setter={setter_name}')
+        attributes.append(f"setter={setter_name}")
 
     return (type_string, attributes, ivar_name)
 
@@ -786,22 +796,22 @@ def decode_type_encoding(type_enc: str) -> str:
 
     # Strip type qualifiers (r, n, N, o, O, R, V)
     qualifiers = []
-    while type_enc and type_enc[0] in 'rnNoORV':
+    while type_enc and type_enc[0] in "rnNoORV":
         qual = type_enc[0]
-        if qual == 'r':
-            qualifiers.append('const')
-        elif qual == 'n':
-            qualifiers.append('in')
-        elif qual == 'N':
-            qualifiers.append('inout')
-        elif qual == 'o':
-            qualifiers.append('out')
-        elif qual == 'O':
-            qualifiers.append('bycopy')
-        elif qual == 'R':
-            qualifiers.append('byref')
-        elif qual == 'V':
-            qualifiers.append('oneway')
+        if qual == "r":
+            qualifiers.append("const")
+        elif qual == "n":
+            qualifiers.append("in")
+        elif qual == "N":
+            qualifiers.append("inout")
+        elif qual == "o":
+            qualifiers.append("out")
+        elif qual == "O":
+            qualifiers.append("bycopy")
+        elif qual == "R":
+            qualifiers.append("byref")
+        elif qual == "V":
+            qualifiers.append("oneway")
         type_enc = type_enc[1:]
 
     # Object type with class name: @"ClassName" or @"ClassName"
@@ -829,7 +839,7 @@ def decode_type_encoding(type_enc: str) -> str:
         class_name = type_enc[start_idx:end_idx]
 
         # Strip angle brackets for protocols
-        if class_name.startswith('<') and class_name.endswith('>'):
+        if class_name.startswith("<") and class_name.endswith(">"):
             protocol_name = class_name[1:-1]
             result = f"id<{protocol_name}>"
         else:
@@ -841,26 +851,26 @@ def decode_type_encoding(type_enc: str) -> str:
 
     # Basic types
     type_map = {
-        'c': 'char',
-        'i': 'int',
-        's': 'short',
-        'l': 'long',
-        'q': 'long long',
-        'C': 'unsigned char',
-        'I': 'unsigned int',
-        'S': 'unsigned short',
-        'L': 'unsigned long',
-        'Q': 'unsigned long long',
-        'f': 'float',
-        'd': 'double',
-        'B': 'BOOL',
-        'v': 'void',
-        '*': 'char *',
-        '@': 'id',
-        '@?': 'block',
-        '#': 'Class',
-        ':': 'SEL',
-        '?': '?'
+        "c": "char",
+        "i": "int",
+        "s": "short",
+        "l": "long",
+        "q": "long long",
+        "C": "unsigned char",
+        "I": "unsigned int",
+        "S": "unsigned short",
+        "L": "unsigned long",
+        "Q": "unsigned long long",
+        "f": "float",
+        "d": "double",
+        "B": "BOOL",
+        "v": "void",
+        "*": "char *",
+        "@": "id",
+        "@?": "block",
+        "#": "Class",
+        ":": "SEL",
+        "?": "?",
     }
 
     # Check basic types first
@@ -871,7 +881,7 @@ def decode_type_encoding(type_enc: str) -> str:
         return result
 
     # Pointer type
-    if type_enc.startswith('^'):
+    if type_enc.startswith("^"):
         base_type = decode_type_encoding(type_enc[1:])
         result = f"{base_type} *"
         if qualifiers:
@@ -879,9 +889,9 @@ def decode_type_encoding(type_enc: str) -> str:
         return result
 
     # Array type
-    if type_enc.startswith('['):
+    if type_enc.startswith("["):
         # Format: [count<type>]
-        end_bracket = type_enc.find(']')
+        end_bracket = type_enc.find("]")
         if end_bracket > 0:
             inner = type_enc[1:end_bracket]
             # Extract count
@@ -897,15 +907,15 @@ def decode_type_encoding(type_enc: str) -> str:
                 return result
 
     # Struct type
-    if type_enc.startswith('{'):
+    if type_enc.startswith("{"):
         # Format: {name=field1field2...}
         # Just extract the struct name
-        end_equal = type_enc.find('=')
+        end_equal = type_enc.find("=")
         if end_equal > 0:
             struct_name = type_enc[1:end_equal]
             result = f"struct {struct_name}"
         else:
-            end_brace = type_enc.find('}')
+            end_brace = type_enc.find("}")
             if end_brace > 0:
                 struct_name = type_enc[1:end_brace]
                 result = f"struct {struct_name}"
@@ -916,9 +926,9 @@ def decode_type_encoding(type_enc: str) -> str:
         return result
 
     # Union type
-    if type_enc.startswith('('):
+    if type_enc.startswith("("):
         # Format: (name=field1field2...)
-        end_equal = type_enc.find('=')
+        end_equal = type_enc.find("=")
         if end_equal > 0:
             union_name = type_enc[1:end_equal]
             result = f"union {union_name}"
@@ -927,7 +937,7 @@ def decode_type_encoding(type_enc: str) -> str:
             return result
 
     # Bitfield
-    if type_enc.startswith('b'):
+    if type_enc.startswith("b"):
         # Format: b<num>
         num = type_enc[1:]
         bit_label = "bit" if num == "1" else "bits"
@@ -976,7 +986,7 @@ def get_class_properties(frame: lldb.SBFrame, class_name: str) -> List[Dict[str,
         return []
 
     # Allocate memory for the count
-    count_var_expr = f'(unsigned int *)malloc(sizeof(unsigned int))'
+    count_var_expr = "(unsigned int *)malloc(sizeof(unsigned int))"
     count_var_result = frame.EvaluateExpression(count_var_expr)
 
     if not count_var_result.IsValid() or count_var_result.GetError().Fail():
@@ -985,29 +995,29 @@ def get_class_properties(frame: lldb.SBFrame, class_name: str) -> List[Dict[str,
     count_var_ptr = count_var_result.GetValueAsUnsigned()
 
     # Get property list
-    prop_list_expr = f'(void *)class_copyPropertyList((Class)0x{class_ptr:x}, (unsigned int *)0x{count_var_ptr:x})'
+    prop_list_expr = f"(void *)class_copyPropertyList((Class)0x{class_ptr:x}, (unsigned int *)0x{count_var_ptr:x})"
     prop_list_result = frame.EvaluateExpression(prop_list_expr)
 
     if not prop_list_result.IsValid() or prop_list_result.GetError().Fail():
-        frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
+        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
         return []
 
     prop_list_ptr = prop_list_result.GetValueAsUnsigned()
 
     # Read the count
-    count_read_expr = f'(unsigned int)(*(unsigned int *)0x{count_var_ptr:x})'
+    count_read_expr = f"(unsigned int)(*(unsigned int *)0x{count_var_ptr:x})"
     count_read_result = frame.EvaluateExpression(count_read_expr)
 
     if not count_read_result.IsValid() or count_read_result.GetError().Fail():
         if prop_list_ptr != 0:
-            frame.EvaluateExpression(f'(void)free((void *)0x{prop_list_ptr:x})')
-        frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
+            frame.EvaluateExpression(f"(void)free((void *)0x{prop_list_ptr:x})")
+        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
         return []
 
     prop_count = count_read_result.GetValueAsUnsigned()
 
     if prop_count == 0 or prop_list_ptr == 0:
-        frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
+        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
         return []
 
     # Read property list as array of pointers
@@ -1020,15 +1030,15 @@ def get_class_properties(frame: lldb.SBFrame, class_name: str) -> List[Dict[str,
 
     if not error.Success():
         if prop_list_ptr != 0:
-            frame.EvaluateExpression(f'(void)free((void *)0x{prop_list_ptr:x})')
-        frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
+            frame.EvaluateExpression(f"(void)free((void *)0x{prop_list_ptr:x})")
+        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
         return []
 
     # Parse property pointers
     if pointer_size == 8:
-        format_str = f'{prop_count}Q'
+        format_str = f"{prop_count}Q"
     else:
-        format_str = f'{prop_count}I'
+        format_str = f"{prop_count}I"
 
     prop_pointers = struct.unpack(format_str, prop_array_bytes)
 
@@ -1039,28 +1049,28 @@ def get_class_properties(frame: lldb.SBFrame, class_name: str) -> List[Dict[str,
     # Build a batched expression that gets all info for all properties at once
     info_struct_size = prop_count * 2 * 8  # 2 pointers per property (name, attributes)
 
-    batch_expr = f'''
+    batch_expr = f"""
 (void *)(^{{
     void **info = (void **)malloc({info_struct_size});
     if (!info) return (void *)0;
-    '''
+    """
 
     for i, prop_ptr in enumerate(prop_pointers):
         if prop_ptr != 0:
-            batch_expr += f'''
+            batch_expr += f"""
     info[{i * 2}] = (void *)property_getName((void *)0x{prop_ptr:x});
     info[{i * 2 + 1}] = (void *)property_getAttributes((void *)0x{prop_ptr:x});
-'''
+"""
         else:
-            batch_expr += f'''
+            batch_expr += f"""
     info[{i * 2}] = (void *)0;
     info[{i * 2 + 1}] = (void *)0;
-'''
+"""
 
-    batch_expr += '''
+    batch_expr += """
     return (void *)info;
 }())
-'''
+"""
 
     # Execute the batch expression
     batch_result = frame.EvaluateExpression(batch_expr)
@@ -1076,9 +1086,9 @@ def get_class_properties(frame: lldb.SBFrame, class_name: str) -> List[Dict[str,
             if error.Success():
                 # Parse the pointers
                 if pointer_size == 8:
-                    info_pointers = struct.unpack(f'{prop_count * 2}Q', info_bytes)
+                    info_pointers = struct.unpack(f"{prop_count * 2}Q", info_bytes)
                 else:
-                    info_pointers = struct.unpack(f'{prop_count * 2}I', info_bytes)
+                    info_pointers = struct.unpack(f"{prop_count * 2}I", info_bytes)
 
                 # Now read strings from memory using the pointers
                 for i in range(prop_count):
@@ -1104,7 +1114,7 @@ def get_class_properties(frame: lldb.SBFrame, class_name: str) -> List[Dict[str,
                     properties.append((prop_name, prop_attrs))
 
             # Free the info struct
-            frame.EvaluateExpression(f'(void)free((void *)0x{info_ptr:x})')
+            frame.EvaluateExpression(f"(void)free((void *)0x{info_ptr:x})")
     else:
         # Fallback to individual calls
         for prop_ptr in prop_pointers:
@@ -1112,7 +1122,7 @@ def get_class_properties(frame: lldb.SBFrame, class_name: str) -> List[Dict[str,
                 continue
 
             # Get property name
-            name_expr = f'(const char *)property_getName((void *)0x{prop_ptr:x})'
+            name_expr = f"(const char *)property_getName((void *)0x{prop_ptr:x})"
             name_result = frame.EvaluateExpression(name_expr)
 
             if not name_result.IsValid() or name_result.GetError().Fail():
@@ -1127,7 +1137,7 @@ def get_class_properties(frame: lldb.SBFrame, class_name: str) -> List[Dict[str,
                 continue
 
             # Get property attributes
-            attr_expr = f'(const char *)property_getAttributes((void *)0x{prop_ptr:x})'
+            attr_expr = f"(const char *)property_getAttributes((void *)0x{prop_ptr:x})"
             attr_result = frame.EvaluateExpression(attr_expr)
 
             if not attr_result.IsValid() or attr_result.GetError().Fail():
@@ -1147,8 +1157,8 @@ def get_class_properties(frame: lldb.SBFrame, class_name: str) -> List[Dict[str,
 
     # Clean up
     if prop_list_ptr != 0:
-        frame.EvaluateExpression(f'(void)free((void *)0x{prop_list_ptr:x})')
-    frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
+        frame.EvaluateExpression(f"(void)free((void *)0x{prop_list_ptr:x})")
+    frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
 
     return properties
 
@@ -1163,17 +1173,17 @@ def matches_pattern(class_name: str, pattern: Optional[str]) -> bool:
         return True
 
     # Check if pattern contains wildcard characters
-    has_wildcards = '*' in pattern or '?' in pattern
+    has_wildcards = "*" in pattern or "?" in pattern
 
     if has_wildcards:
         # Convert wildcard pattern to regex
         # Escape special regex characters except * and ?
         regex_pattern = re.escape(pattern)
         # Replace escaped wildcards with regex equivalents
-        regex_pattern = regex_pattern.replace(r'\*', '.*')
-        regex_pattern = regex_pattern.replace(r'\?', '.')
+        regex_pattern = regex_pattern.replace(r"\*", ".*")
+        regex_pattern = regex_pattern.replace(r"\?", ".")
         # Make it match the whole string and case-insensitive
-        regex_pattern = f'^{regex_pattern}$'
+        regex_pattern = f"^{regex_pattern}$"
         try:
             return bool(re.match(regex_pattern, class_name, re.IGNORECASE))
         except re.error:
@@ -1203,14 +1213,15 @@ def matches_dylib_pattern(dylib_path: str, pattern: str) -> bool:
     # Escape special regex characters except * and ?
     regex_pattern = re.escape(pattern)
     # Replace escaped wildcards with regex equivalents
-    regex_pattern = regex_pattern.replace(r'\*', '.*')
-    regex_pattern = regex_pattern.replace(r'\?', '.')
+    regex_pattern = regex_pattern.replace(r"\*", ".*")
+    regex_pattern = regex_pattern.replace(r"\?", ".")
     # Match anywhere in the path (not just full string) for convenience
     try:
         return bool(re.search(regex_pattern, dylib_path, re.IGNORECASE))
     except re.error:
         # Fallback to substring match if regex is invalid
         return pattern.lower() in dylib_path.lower()
+
 
 def build_batch_expression(class_pointers_batch: List[int]) -> str:
     """
@@ -1240,18 +1251,18 @@ def build_batch_expression(class_pointers_batch: List[int]) -> str:
     buffer_size = offset_size + string_estimate
 
     # Build expression using Objective-C block (LLDB doesn't support GCC statement expressions)
-    expr = f'''
+    expr = f"""
 (void *)(^{{
     char *buffer = (char *)malloc({buffer_size});
     if (!buffer) return (void *)0;
     unsigned int *offsets = (unsigned int *)buffer;
     char *string_data = buffer + {offset_size};
     unsigned int current_offset = 0;
-'''
+"""
 
     for i, class_ptr in enumerate(class_pointers_batch):
         if class_ptr != 0:
-            expr += f'''
+            expr += f"""
     const char *name_{i} = (const char *)class_getName((Class)0x{class_ptr:x});
     if (name_{i}) {{
         offsets[{i}] = current_offset;
@@ -1263,15 +1274,15 @@ def build_batch_expression(class_pointers_batch: List[int]) -> str:
     }} else {{
         offsets[{i}] = 0xFFFFFFFF;
     }}
-'''
+"""
         else:
-            expr += f'    offsets[{i}] = 0xFFFFFFFF;\n'
+            expr += f"    offsets[{i}] = 0xFFFFFFFF;\n"
 
-    expr += f'''
+    expr += f"""
     offsets[{batch_size}] = current_offset;
     return (void *)buffer;
 }}())
-'''
+"""
 
     return expr
 
@@ -1281,7 +1292,7 @@ def read_consolidated_string_buffer(
     batch_size: int,
     process: lldb.SBProcess,
     frame: lldb.SBFrame,
-    pattern: Optional[str] = None
+    pattern: Optional[str] = None,
 ) -> List[str]:
     """
     Read class names from a consolidated string buffer.
@@ -1308,11 +1319,11 @@ def read_consolidated_string_buffer(
     offset_bytes = process.ReadMemory(buffer_ptr, offset_array_size, error)
 
     if not error.Success():
-        frame.EvaluateExpression(f'(void)free((void *)0x{buffer_ptr:x})')
+        frame.EvaluateExpression(f"(void)free((void *)0x{buffer_ptr:x})")
         return []
 
     # Parse offsets
-    offsets = struct.unpack(f'{batch_size + 1}I', offset_bytes)
+    offsets = struct.unpack(f"{batch_size + 1}I", offset_bytes)
     total_string_size = offsets[-1]  # Last offset is total size
 
     # Read entire string data buffer in one shot
@@ -1320,7 +1331,7 @@ def read_consolidated_string_buffer(
     string_data = process.ReadMemory(string_data_ptr, total_string_size, error)
 
     # Free the buffer
-    frame.EvaluateExpression(f'(void)free((void *)0x{buffer_ptr:x})')
+    frame.EvaluateExpression(f"(void)free((void *)0x{buffer_ptr:x})")
 
     if not error.Success():
         return []
@@ -1339,14 +1350,14 @@ def read_consolidated_string_buffer(
             next_offset = offsets[i + 1]
         else:
             # Find the null terminator manually
-            null_pos = string_data.find(b'\0', offset)
+            null_pos = string_data.find(b"\0", offset)
             if null_pos == -1:
                 continue
             next_offset = null_pos + 1
 
         # Extract string
         try:
-            class_name = string_data[offset:next_offset - 1].decode('utf-8')
+            class_name = string_data[offset : next_offset - 1].decode("utf-8")
 
             # Apply pattern filter
             if pattern is None or matches_pattern(class_name, pattern):
@@ -1357,10 +1368,7 @@ def read_consolidated_string_buffer(
     return class_names
 
 
-def try_exact_class_match(
-    frame: lldb.SBFrame,
-    class_name: str
-) -> Tuple[Optional[str], Optional[TimingDict]]:
+def try_exact_class_match(frame: lldb.SBFrame, class_name: str) -> Tuple[Optional[str], Optional[TimingDict]]:
     """
     Fast-path: Try to match a specific class name directly using NSClassFromString.
 
@@ -1385,7 +1393,7 @@ def try_exact_class_match(
         return None, None
 
     # Verify the class name matches (in case of partial match)
-    name_expr = f'(const char *)class_getName((void *)0x{class_ptr:x})'
+    name_expr = f"(const char *)class_getName((void *)0x{class_ptr:x})"
     name_result = frame.EvaluateExpression(name_expr)
 
     if not name_result.IsValid() or name_result.GetError().Fail():
@@ -1396,13 +1404,13 @@ def try_exact_class_match(
         actual_name = unquote_string(actual_name)
         if actual_name == class_name:
             timing = {
-                'total': time.time() - start_time,
-                'setup': 0,
-                'bulk_read': 0,
-                'batching': 0,
-                'cleanup': 0,
-                'expression_count': 2,
-                'memory_read_count': 0
+                "total": time.time() - start_time,
+                "setup": 0,
+                "bulk_read": 0,
+                "batching": 0,
+                "cleanup": 0,
+                "expression_count": 2,
+                "memory_read_count": 0,
             }
             return actual_name, timing
 
@@ -1413,7 +1421,7 @@ def get_all_classes(
     frame: lldb.SBFrame,
     pattern: Optional[str] = None,
     force_reload: bool = False,
-    batch_size: Optional[int] = None
+    batch_size: Optional[int] = None,
 ) -> Tuple[List[str], TimingDict, int, bool]:
     """
     Get all Objective-C classes using objc_copyClassList.
@@ -1450,7 +1458,7 @@ def get_all_classes(
     start_time = time.time()
 
     # FAST-PATH: If pattern doesn't contain wildcards, try exact match first
-    if pattern and '*' not in pattern and '?' not in pattern:
+    if pattern and "*" not in pattern and "?" not in pattern:
         exact_match, exact_timing = try_exact_class_match(frame, pattern)
         if exact_match:
             # Return immediately with the exact match
@@ -1459,21 +1467,21 @@ def get_all_classes(
             # Class not found - return empty results immediately
             # No point enumerating all classes for an exact match that doesn't exist
             timing = {
-                'total': time.time() - start_time,
-                'setup': 0,
-                'bulk_read': 0,
-                'batching': 0,
-                'cleanup': 0,
-                'expression_count': exact_timing['expression_count'] if exact_timing else 2,
-                'memory_read_count': 0
+                "total": time.time() - start_time,
+                "setup": 0,
+                "bulk_read": 0,
+                "batching": 0,
+                "cleanup": 0,
+                "expression_count": exact_timing["expression_count"] if exact_timing else 2,
+                "memory_read_count": 0,
             }
             return [], timing, 0, False
 
     # Check cache first
     if not force_reload and pid in _class_cache:
         cache_entry = _class_cache[pid]
-        all_classes = cache_entry['classes']
-        class_count = cache_entry['count']
+        all_classes = cache_entry["classes"]
+        class_count = cache_entry["count"]
 
         # Filter by pattern
         if pattern:
@@ -1483,13 +1491,13 @@ def get_all_classes(
 
         # Create minimal timing info for cached results
         timing = {
-            'total': time.time() - start_time,
-            'setup': 0,
-            'bulk_read': 0,
-            'batching': 0,
-            'cleanup': 0,
-            'expression_count': 0,
-            'memory_read_count': 0
+            "total": time.time() - start_time,
+            "setup": 0,
+            "bulk_read": 0,
+            "batching": 0,
+            "cleanup": 0,
+            "expression_count": 0,
+            "memory_read_count": 0,
         }
 
         return filtered_classes, timing, class_count, True
@@ -1497,58 +1505,58 @@ def get_all_classes(
     # Not in cache or forced reload - enumerate from runtime
     # Detailed timing metrics
     timing = {
-        'total': 0,
-        'setup': 0,
-        'bulk_read': 0,
-        'batching': 0,
-        'cleanup': 0,
-        'expression_count': 0,
-        'memory_read_count': 0
+        "total": 0,
+        "setup": 0,
+        "bulk_read": 0,
+        "batching": 0,
+        "cleanup": 0,
+        "expression_count": 0,
+        "memory_read_count": 0,
     }
     setup_start = time.time()
 
     # Steps 1-3: Same as Phase 1/2 (get class pointer array via bulk read)
     # Allocate count variable
-    count_var_expr = f'(unsigned int *)malloc(sizeof(unsigned int))'
+    count_var_expr = "(unsigned int *)malloc(sizeof(unsigned int))"
     count_var_result = frame.EvaluateExpression(count_var_expr)
-    timing['expression_count'] += 1
+    timing["expression_count"] += 1
 
     if not count_var_result.IsValid() or count_var_result.GetError().Fail():
-        print(f"Warning: Failed to allocate count variable")
+        print("Warning: Failed to allocate count variable")
         return []
 
     count_var_ptr = count_var_result.GetValueAsUnsigned()
 
     # Get class list using objc_copyClassList
-    class_list_expr = f'(void *)objc_copyClassList((unsigned int *)0x{count_var_ptr:x})'
+    class_list_expr = f"(void *)objc_copyClassList((unsigned int *)0x{count_var_ptr:x})"
     class_list_result = frame.EvaluateExpression(class_list_expr)
-    timing['expression_count'] += 1
+    timing["expression_count"] += 1
 
     if not class_list_result.IsValid() or class_list_result.GetError().Fail():
         print(f"Warning: objc_copyClassList failed: {class_list_result.GetError()}")
-        frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
-        timing['expression_count'] += 1
+        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        timing["expression_count"] += 1
         return []
 
     class_list_ptr = class_list_result.GetValueAsUnsigned()
 
     # Read the count
-    count_read_expr = f'(unsigned int)(*(unsigned int *)0x{count_var_ptr:x})'
+    count_read_expr = f"(unsigned int)(*(unsigned int *)0x{count_var_ptr:x})"
     count_read_result = frame.EvaluateExpression(count_read_expr)
-    timing['expression_count'] += 1
+    timing["expression_count"] += 1
 
     if not count_read_result.IsValid() or count_read_result.GetError().Fail():
-        print(f"Warning: Failed to read class count")
+        print("Warning: Failed to read class count")
         if class_list_ptr != 0:
-            frame.EvaluateExpression(f'(void)free((void *)0x{class_list_ptr:x})')
-            timing['expression_count'] += 1
-        frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
-        timing['expression_count'] += 1
+            frame.EvaluateExpression(f"(void)free((void *)0x{class_list_ptr:x})")
+            timing["expression_count"] += 1
+        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        timing["expression_count"] += 1
         return []
 
     class_count = count_read_result.GetValueAsUnsigned()
 
-    timing['setup'] = time.time() - setup_start
+    timing["setup"] = time.time() - setup_start
     bulk_read_start = time.time()
 
     # Bulk read the class pointer array (same as Phase 1/2)
@@ -1558,26 +1566,26 @@ def get_all_classes(
 
     error = lldb.SBError()
     class_array_bytes = process.ReadMemory(class_list_ptr, array_size, error)
-    timing['memory_read_count'] += 1
+    timing["memory_read_count"] += 1
 
     if not error.Success():
         print(f"Error: Failed to read class array from memory: {error}")
         if class_list_ptr != 0:
-            frame.EvaluateExpression(f'(void)free((void *)0x{class_list_ptr:x})')
-            timing['expression_count'] += 1
-        frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
-        timing['expression_count'] += 1
+            frame.EvaluateExpression(f"(void)free((void *)0x{class_list_ptr:x})")
+            timing["expression_count"] += 1
+        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        timing["expression_count"] += 1
         return []
 
     # Parse class pointers in Python (fast - no LLDB overhead)
     if pointer_size == 8:
-        format_str = f'{class_count}Q'  # 64-bit unsigned pointers
+        format_str = f"{class_count}Q"  # 64-bit unsigned pointers
     else:
-        format_str = f'{class_count}I'  # 32-bit unsigned pointers
+        format_str = f"{class_count}I"  # 32-bit unsigned pointers
 
     class_pointers = struct.unpack(format_str, class_array_bytes)
 
-    timing['bulk_read'] = time.time() - bulk_read_start
+    timing["bulk_read"] = time.time() - bulk_read_start
     batching_start = time.time()
 
     # PHASE 3 OPTIMIZATION: Use consolidated string buffers
@@ -1598,16 +1606,16 @@ def get_all_classes(
 
         # Execute batch expression
         batch_result = frame.EvaluateExpression(batch_expr)
-        timing['expression_count'] += 1
+        timing["expression_count"] += 1
 
         if not batch_result.IsValid() or batch_result.GetError().Fail():
             # Fallback: process each class individually if batch expression fails
             for class_ptr in batch:
                 if class_ptr == 0:
                     continue
-                class_name_expr = f'(const char *)class_getName((void *)0x{class_ptr:x})'
+                class_name_expr = f"(const char *)class_getName((void *)0x{class_ptr:x})"
                 class_name_result = frame.EvaluateExpression(class_name_expr)
-                timing['expression_count'] += 1
+                timing["expression_count"] += 1
                 if class_name_result.IsValid():
                     class_name = class_name_result.GetSummary()
                     if class_name:
@@ -1617,40 +1625,38 @@ def get_all_classes(
             continue
 
         # Read consolidated string buffer (without pattern filtering - get all classes)
-        batch_names = read_consolidated_string_buffer(
-            batch_result, current_batch_size, process, frame, pattern=None
-        )
-        timing['expression_count'] += 1  # For free() in read_consolidated_string_buffer
-        timing['memory_read_count'] += 2  # One for offsets, one for string data
+        batch_names = read_consolidated_string_buffer(batch_result, current_batch_size, process, frame, pattern=None)
+        timing["expression_count"] += 1  # For free() in read_consolidated_string_buffer
+        timing["memory_read_count"] += 2  # One for offsets, one for string data
 
         class_names.extend(batch_names)
 
         # Progress indicator for large operations
         if len(class_pointers) > 1000 and (batch_idx // batch_size) % 10 == 0 and batch_idx > 0:
             progress = (batch_idx / len(class_pointers)) * 100
-            print(f"  Progress: {progress:.0f}%", end='\r')
+            print(f"  Progress: {progress:.0f}%", end="\r")
 
     if len(class_pointers) > 1000:
         print()  # Clear progress line
 
-    timing['batching'] = time.time() - batching_start
+    timing["batching"] = time.time() - batching_start
     cleanup_start = time.time()
 
     # Clean up allocated memory
     if class_list_ptr != 0:
-        frame.EvaluateExpression(f'(void)free((void *)0x{class_list_ptr:x})')
-        timing['expression_count'] += 1
-    frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
-    timing['expression_count'] += 1
+        frame.EvaluateExpression(f"(void)free((void *)0x{class_list_ptr:x})")
+        timing["expression_count"] += 1
+    frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+    timing["expression_count"] += 1
 
-    timing['cleanup'] = time.time() - cleanup_start
-    timing['total'] = time.time() - start_time
+    timing["cleanup"] = time.time() - cleanup_start
+    timing["total"] = time.time() - start_time
 
     # Store in cache (unfiltered list)
     _class_cache[pid] = {
-        'classes': class_names,
-        'count': class_count,
-        'timestamp': time.time()
+        "classes": class_names,
+        "count": class_count,
+        "timestamp": time.time(),
     }
 
     # Filter by pattern if needed
@@ -1668,6 +1674,6 @@ def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any])
     debugger.HandleCommand(
         'command script add -h "Find Objective-C classes. '
         'Usage: ocls [pattern] [--reload] [--clear-cache] [--verbose]" '
-        f'-f {module_path} ocls'
+        f"-f {module_path} ocls"
     )
     print(f"[lldb-objc v{__version__}] 'ocls' installed - Find Objective-C classes by pattern")

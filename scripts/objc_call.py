@@ -34,12 +34,7 @@ except ImportError:
 from objc_utils import detect_method_type as _detect_method_type_base
 
 
-def detect_method_type(
-    frame: lldb.SBFrame,
-    receiver: str,
-    selector_with_args: str,
-    verbose: bool = False
-) -> bool:
+def detect_method_type(frame: lldb.SBFrame, receiver: str, selector_with_args: str, verbose: bool = False) -> bool:
     """
     Auto-detect whether a method is a class method (+) or instance method (-).
 
@@ -50,7 +45,7 @@ def detect_method_type(
     - Otherwise, delegates to shared detect_method_type in objc_utils
     """
     # If receiver is a variable, register, or address, it's definitely an instance method
-    if receiver.startswith('$') or receiver.startswith('0x') or receiver.isdigit():
+    if receiver.startswith("$") or receiver.startswith("0x") or receiver.isdigit():
         if verbose:
             print(f"Auto-detect: Instance method (receiver is {receiver})")
         return False
@@ -67,7 +62,7 @@ def evaluate_expression(
     frame: lldb.SBFrame,
     expression: str,
     result: lldb.SBCommandReturnObject,
-    verbose: bool = False
+    verbose: bool = False,
 ) -> None:
     """
     Evaluate an arbitrary Objective-C expression and display the result.
@@ -105,7 +100,7 @@ def call_objc_method(
     debugger: lldb.SBDebugger,
     command: str,
     result: lldb.SBCommandReturnObject,
-    internal_dict: Dict[str, Any]
+    internal_dict: Dict[str, Any],
 ) -> None:
     """
     Call an Objective-C method and display the result.
@@ -126,21 +121,21 @@ def call_objc_method(
     command = command.strip()
     verbose = False
 
-    if command.startswith('--verbose ') or command.startswith('-v '):
+    if command.startswith("--verbose ") or command.startswith("-v "):
         verbose = True
-        command = command.split(None, 1)[1] if ' ' in command else ''
+        command = command.split(None, 1)[1] if " " in command else ""
         command = command.strip()
 
     # Check if this is a method call syntax or an arbitrary expression
     # Method call: -[...], +[...], or [ClassName selector] (auto-detect)
     # For auto-detect, check that first word after [ is a valid identifier (not another [)
-    is_method_call = command.startswith('-[') or command.startswith('+[')
+    is_method_call = command.startswith("-[") or command.startswith("+[")
 
-    if command.startswith('[') and not command.startswith('[['):
+    if command.startswith("[") and not command.startswith("[["):
         # Could be auto-detect method call [ClassName selector]
         # Check if it looks like a method call (first word after [ is identifier)
         inner = command[1:].lstrip()
-        if inner and (inner[0].isalpha() or inner[0] == '_' or inner[0] == '$'):
+        if inner and (inner[0].isalpha() or inner[0] == "_" or inner[0] == "$"):
             is_method_call = True
 
     # If not method call syntax, treat as arbitrary Objective-C expression
@@ -149,16 +144,16 @@ def call_objc_method(
         return
 
     # Determine if we need to auto-detect method type
-    auto_detect = command.startswith('[')
-    is_class_method = command.startswith('+[')
+    auto_detect = command.startswith("[")
+    is_class_method = command.startswith("+[")
 
     # Find the matching closing bracket
     bracket_count = 0
     end_idx = -1
     for i, c in enumerate(command):
-        if c == '[':
+        if c == "[":
             bracket_count += 1
-        elif c == ']':
+        elif c == "]":
             bracket_count -= 1
             if bracket_count == 0:
                 end_idx = i
@@ -229,31 +224,33 @@ def call_objc_method(
             print(f"Resolving instance method: -[{receiver} {selector_with_args}]")
 
         # Determine receiver type and build expression
-        if receiver.startswith('$'):
+        if receiver.startswith("$"):
             # Variable or register reference
             # Check if it's a valid variable/register in the frame
             var_name = receiver  # Keep the $ prefix
             # Cast both the receiver and the entire message send to avoid type ambiguity
-            call_expr = f'(id)[(id){var_name} {selector_with_args}]'
+            call_expr = f"(id)[(id){var_name} {selector_with_args}]"
 
             if verbose:
                 # Try to get the value of the variable/register
-                var_result = frame.EvaluateExpression(f'(void*){var_name}')
+                var_result = frame.EvaluateExpression(f"(void*){var_name}")
                 if var_result.IsValid() and not var_result.GetError().Fail():
                     print(f"  Receiver ({var_name}): {var_result.GetValue()}")
                 else:
                     print(f"  Receiver: {var_name}")
 
-        elif receiver.startswith('0x') or receiver.isdigit():
+        elif receiver.startswith("0x") or receiver.isdigit():
             # Hex address or numeric address
             # Cast both the receiver and the entire message send to avoid type ambiguity
-            call_expr = f'(id)[(id){receiver} {selector_with_args}]'
+            call_expr = f"(id)[(id){receiver} {selector_with_args}]"
 
             if verbose:
                 print(f"  Receiver (address): {receiver}")
 
         else:
-            result.SetError(f"Invalid receiver '{receiver}'. For instance methods, use $variable, $register, or hex address.")
+            result.SetError(
+                f"Invalid receiver '{receiver}'. For instance methods, use $variable, $register, or hex address."
+            )
             return
 
         if verbose:
@@ -304,10 +301,10 @@ def extract_selector_name(selector_with_args: str) -> str:
         c = selector_with_args[i]
 
         # Skip Objective-C string literals @"..."
-        if c == '@' and i + 1 < n and selector_with_args[i + 1] == '"':
+        if c == "@" and i + 1 < n and selector_with_args[i + 1] == '"':
             i += 2  # Skip @"
             while i < n:
-                if selector_with_args[i] == '\\' and i + 1 < n:
+                if selector_with_args[i] == "\\" and i + 1 < n:
                     i += 2  # Skip escaped character
                 elif selector_with_args[i] == '"':
                     i += 1  # Skip closing quote
@@ -320,7 +317,7 @@ def extract_selector_name(selector_with_args: str) -> str:
         if c == '"':
             i += 1
             while i < n:
-                if selector_with_args[i] == '\\' and i + 1 < n:
+                if selector_with_args[i] == "\\" and i + 1 < n:
                     i += 2
                 elif selector_with_args[i] == '"':
                     i += 1
@@ -330,58 +327,58 @@ def extract_selector_name(selector_with_args: str) -> str:
             continue
 
         # Skip parenthesized expressions (handles nesting)
-        if c == '(':
+        if c == "(":
             depth = 1
             i += 1
             while i < n and depth > 0:
-                if selector_with_args[i] == '(':
+                if selector_with_args[i] == "(":
                     depth += 1
-                elif selector_with_args[i] == ')':
+                elif selector_with_args[i] == ")":
                     depth -= 1
                 i += 1
             continue
 
         # Skip bracket expressions (e.g., array subscripts)
-        if c == '[':
+        if c == "[":
             depth = 1
             i += 1
             while i < n and depth > 0:
-                if selector_with_args[i] == '[':
+                if selector_with_args[i] == "[":
                     depth += 1
-                elif selector_with_args[i] == ']':
+                elif selector_with_args[i] == "]":
                     depth -= 1
                 i += 1
             continue
 
         # Skip variable references ($var)
-        if c == '$':
+        if c == "$":
             i += 1
-            while i < n and (selector_with_args[i].isalnum() or selector_with_args[i] == '_'):
+            while i < n and (selector_with_args[i].isalnum() or selector_with_args[i] == "_"):
                 i += 1
             continue
 
         # Skip hex literals (0x...)
-        if c == '0' and i + 1 < n and selector_with_args[i + 1] in 'xX':
+        if c == "0" and i + 1 < n and selector_with_args[i + 1] in "xX":
             i += 2
-            while i < n and selector_with_args[i] in '0123456789abcdefABCDEF':
+            while i < n and selector_with_args[i] in "0123456789abcdefABCDEF":
                 i += 1
             continue
 
         # Skip numeric literals
         if c.isdigit():
-            while i < n and (selector_with_args[i].isdigit() or selector_with_args[i] == '.'):
+            while i < n and (selector_with_args[i].isdigit() or selector_with_args[i] == "."):
                 i += 1
             continue
 
         # Collect identifier parts (selector components)
-        if c.isalpha() or c == '_':
-            word = ''
-            while i < n and (selector_with_args[i].isalnum() or selector_with_args[i] == '_'):
+        if c.isalpha() or c == "_":
+            word = ""
+            while i < n and (selector_with_args[i].isalnum() or selector_with_args[i] == "_"):
                 word += selector_with_args[i]
                 i += 1
             # Check if followed by colon (selector part)
-            if i < n and selector_with_args[i] == ':':
-                result.append(word + ':')
+            if i < n and selector_with_args[i] == ":":
+                result.append(word + ":")
                 i += 1
             elif not result:
                 # First word might be a no-arg selector
@@ -391,7 +388,7 @@ def extract_selector_name(selector_with_args: str) -> str:
         # Skip whitespace and other characters
         i += 1
 
-    return ''.join(result)
+    return "".join(result)
 
 
 def display_result(sbvalue: lldb.SBValue) -> None:
@@ -443,7 +440,7 @@ def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any])
     module_path = f"{__name__}.call_objc_method"
     debugger.HandleCommand(
         'command script add -h "Call Objective-C methods or evaluate expressions. '
-        'Usage: ocall +[ClassName selector:] or ocall -[$variable selector:] or ocall @\\\"string\\\" [--verbose]" '
-        f'-f {module_path} ocall'
+        'Usage: ocall +[ClassName selector:] or ocall -[$variable selector:] or ocall @\\"string\\" [--verbose]" '
+        f"-f {module_path} ocall"
     )
     print(f"[lldb-objc v{__version__}] 'ocall' installed - Call Objective-C methods and evaluate expressions")

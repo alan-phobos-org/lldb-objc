@@ -45,12 +45,7 @@ except ImportError:
         return type_enc
 
 
-def read_ivar_value(
-    process: lldb.SBProcess,
-    frame: lldb.SBFrame,
-    addr: int,
-    type_enc: str
-) -> Tuple[int, str]:
+def read_ivar_value(process: lldb.SBProcess, frame: lldb.SBFrame, addr: int, type_enc: str) -> Tuple[int, str]:
     """
     Read value at address and generate description based on type encoding.
 
@@ -72,45 +67,55 @@ def read_ivar_value(
         return 0, "?"
 
     # Parse based on type encoding
-    if type_enc.startswith('@'):
+    if type_enc.startswith("@"):
         # Object pointer
-        obj_ptr = struct.unpack('Q', raw_bytes)[0]
+        obj_ptr = struct.unpack("Q", raw_bytes)[0]
         if obj_ptr == 0:
             return 0, "(nil)"
 
-        # Get object description
-        desc_expr = f'(const char *)[[(id)0x{obj_ptr:x} description] UTF8String]'
-        desc_result = frame.EvaluateExpression(desc_expr)
-
-        if desc_result.IsValid():
-            desc_ptr = desc_result.GetValueAsUnsigned()
-            if desc_ptr != 0:
-                desc = process.ReadCStringFromMemory(desc_ptr, 60, error)
-                if error.Success() and desc:
-                    # Truncate long descriptions
-                    if len(desc) > 40:
-                        desc = desc[:37] + "..."
-                    return obj_ptr, desc
-
-        # Fallback: try to get class name
-        class_expr = f'(const char *)class_getName(object_getClass((id)0x{obj_ptr:x}))'
+        # Get class name first
+        class_name = None
+        class_expr = f"(const char *)class_getName(object_getClass((id)0x{obj_ptr:x}))"
         class_result = frame.EvaluateExpression(class_expr)
         if class_result.IsValid():
             class_name_ptr = class_result.GetValueAsUnsigned()
             if class_name_ptr != 0:
                 class_name = process.ReadCStringFromMemory(class_name_ptr, 100, error)
-                if error.Success() and class_name:
-                    return obj_ptr, f"({class_name} instance)"
 
-        return obj_ptr, "(object)"
+        # Get object description
+        desc = None
+        desc_expr = f"(const char *)[[(id)0x{obj_ptr:x} description] UTF8String]"
+        desc_result = frame.EvaluateExpression(desc_expr)
 
-    elif type_enc == '#':
+        if desc_result.IsValid():
+            desc_ptr = desc_result.GetValueAsUnsigned()
+            if desc_ptr != 0:
+                # Read more chars to allow for newline stripping
+                raw_desc = process.ReadCStringFromMemory(desc_ptr, 256, error)
+                if error.Success() and raw_desc:
+                    # Strip newlines and collapse whitespace for single-line display
+                    desc = " ".join(raw_desc.split())
+                    if len(desc) > 128:
+                        desc = desc[:125] + "..."
+
+        # Format: ClassName 0xaddr description_preview
+        if class_name:
+            if desc:
+                return obj_ptr, f"{class_name} {desc}"
+            else:
+                return obj_ptr, f"{class_name}"
+        elif desc:
+            return obj_ptr, desc
+        else:
+            return obj_ptr, "(object)"
+
+    elif type_enc == "#":
         # Class object
-        class_ptr = struct.unpack('Q', raw_bytes)[0]
+        class_ptr = struct.unpack("Q", raw_bytes)[0]
         if class_ptr == 0:
             return 0, "(nil)"
 
-        class_expr = f'(const char *)class_getName((Class)0x{class_ptr:x})'
+        class_expr = f"(const char *)class_getName((Class)0x{class_ptr:x})"
         class_result = frame.EvaluateExpression(class_expr)
         if class_result.IsValid():
             name_ptr = class_result.GetValueAsUnsigned()
@@ -120,13 +125,13 @@ def read_ivar_value(
                     return class_ptr, f"Class ({class_name})"
         return class_ptr, "Class"
 
-    elif type_enc == ':':
+    elif type_enc == ":":
         # SEL
-        sel_ptr = struct.unpack('Q', raw_bytes)[0]
+        sel_ptr = struct.unpack("Q", raw_bytes)[0]
         if sel_ptr == 0:
             return 0, "(NULL)"
 
-        sel_expr = f'(const char *)sel_getName((SEL)0x{sel_ptr:x})'
+        sel_expr = f"(const char *)sel_getName((SEL)0x{sel_ptr:x})"
         sel_result = frame.EvaluateExpression(sel_expr)
         if sel_result.IsValid():
             name_ptr = sel_result.GetValueAsUnsigned()
@@ -136,50 +141,50 @@ def read_ivar_value(
                     return sel_ptr, f"@selector({sel_name})"
         return sel_ptr, "SEL"
 
-    elif type_enc in ['d', 'f']:
+    elif type_enc in ["d", "f"]:
         # Double/Float
-        if type_enc == 'd':
-            value = struct.unpack('d', raw_bytes)[0]
-            return struct.unpack('Q', raw_bytes)[0], f"{value} (double)"
+        if type_enc == "d":
+            value = struct.unpack("d", raw_bytes)[0]
+            return struct.unpack("Q", raw_bytes)[0], f"{value} (double)"
         else:
-            value = struct.unpack('f', raw_bytes[:4])[0]
-            return struct.unpack('I', raw_bytes[:4])[0], f"{value} (float)"
+            value = struct.unpack("f", raw_bytes[:4])[0]
+            return struct.unpack("I", raw_bytes[:4])[0], f"{value} (float)"
 
-    elif type_enc in ['q', 'l', 'i', 's', 'c']:
+    elif type_enc in ["q", "l", "i", "s", "c"]:
         # Signed integers
         type_map = {
-            'q': ('q', 'long long'),
-            'l': ('q', 'long'),
-            'i': ('i', 'int'),
-            's': ('h', 'short'),
-            'c': ('b', 'char')
+            "q": ("q", "long long"),
+            "l": ("q", "long"),
+            "i": ("i", "int"),
+            "s": ("h", "short"),
+            "c": ("b", "char"),
         }
         fmt, type_name = type_map[type_enc]
-        value = struct.unpack(fmt, raw_bytes[:struct.calcsize(fmt)])[0]
+        value = struct.unpack(fmt, raw_bytes[: struct.calcsize(fmt)])[0]
         return value & 0xFFFFFFFFFFFFFFFF, f"{value} ({type_name})"
 
-    elif type_enc in ['Q', 'L', 'I', 'S', 'C']:
+    elif type_enc in ["Q", "L", "I", "S", "C"]:
         # Unsigned integers
         type_map = {
-            'Q': ('Q', 'unsigned long long'),
-            'L': ('Q', 'unsigned long'),
-            'I': ('I', 'unsigned int'),
-            'S': ('H', 'unsigned short'),
-            'C': ('B', 'unsigned char')
+            "Q": ("Q", "unsigned long long"),
+            "L": ("Q", "unsigned long"),
+            "I": ("I", "unsigned int"),
+            "S": ("H", "unsigned short"),
+            "C": ("B", "unsigned char"),
         }
         fmt, type_name = type_map[type_enc]
-        value = struct.unpack(fmt, raw_bytes[:struct.calcsize(fmt)])[0]
+        value = struct.unpack(fmt, raw_bytes[: struct.calcsize(fmt)])[0]
         return value, f"{value} ({type_name})"
 
-    elif type_enc == 'B':
+    elif type_enc == "B":
         # BOOL
-        value = struct.unpack('B', raw_bytes[:1])[0]
+        value = struct.unpack("B", raw_bytes[:1])[0]
         bool_str = "YES" if value else "NO"
         return value, f"{bool_str} (BOOL)"
 
-    elif type_enc == '*':
+    elif type_enc == "*":
         # char *
-        str_ptr = struct.unpack('Q', raw_bytes)[0]
+        str_ptr = struct.unpack("Q", raw_bytes)[0]
         if str_ptr == 0:
             return 0, "(NULL)"
 
@@ -190,16 +195,16 @@ def read_ivar_value(
             return str_ptr, f'"{c_str}"'
         return str_ptr, "(char *)"
 
-    elif type_enc.startswith('^'):
+    elif type_enc.startswith("^"):
         # Pointer type
-        ptr_value = struct.unpack('Q', raw_bytes)[0]
+        ptr_value = struct.unpack("Q", raw_bytes)[0]
         if ptr_value == 0:
             return 0, "(NULL)"
         return ptr_value, "(ptr)"
 
     else:
         # Unknown/struct/union - just show hex
-        value = struct.unpack('Q', raw_bytes)[0]
+        value = struct.unpack("Q", raw_bytes)[0]
         return value, ""
 
 
@@ -227,17 +232,9 @@ def get_ivar_values(frame: lldb.SBFrame, obj_addr: int, class_name: str) -> List
         ivar_addr = obj_addr + ivar_offset
 
         # Read value at that address
-        value_addr, value_desc = read_ivar_value(
-            process, frame, ivar_addr, ivar_type_enc
-        )
+        value_addr, value_desc = read_ivar_value(process, frame, ivar_addr, ivar_type_enc)
 
-        result.append((
-            ivar_name,
-            ivar_type_enc,
-            ivar_offset,
-            value_addr,
-            value_desc
-        ))
+        result.append((ivar_name, ivar_type_enc, ivar_offset, value_addr, value_desc))
 
     return result
 
@@ -247,7 +244,7 @@ def format_object_inspection(
     class_name: str,
     description: str,
     hierarchy: List[str],
-    ivar_values: List[Tuple]
+    ivar_values: List[Tuple],
 ) -> str:
     """Format the complete inspection output."""
 
@@ -258,7 +255,7 @@ def format_object_inspection(
 
     # Description (truncated to 80 chars, one line)
     if description:
-        desc = description.replace('\n', ' ')
+        desc = description.replace("\n", " ")
         if len(desc) > 80:
             desc = desc[:77] + "..."
         lines.append(f"  {desc}")
@@ -294,13 +291,10 @@ def format_object_inspection(
         lines.append("")
         lines.append("  Instance Variables: none")
 
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
-def inspect_object(
-    frame: lldb.SBFrame,
-    obj_input: str
-) -> str:
+def inspect_object(frame: lldb.SBFrame, obj_input: str) -> str:
     """
     Inspect a specific object instance.
 
@@ -324,7 +318,7 @@ def inspect_object(
             return f"Error: Invalid hex address '{obj_input}'"
     else:
         # Evaluate as expression to get the object pointer value
-        var_expr = f'{obj_input}'
+        var_expr = f"{obj_input}"
         var_result = frame.EvaluateExpression(var_expr)
 
         if not var_result.IsValid() or var_result.GetError().Fail():
@@ -338,7 +332,7 @@ def inspect_object(
         return "Error: Invalid object address (nil)"
 
     # Step 2: Validate it's an Objective-C object and get class name
-    class_expr = f'(const char *)class_getName((Class)[(id)0x{obj_addr:x} class])'
+    class_expr = f"(const char *)class_getName((Class)[(id)0x{obj_addr:x} class])"
     class_result = frame.EvaluateExpression(class_expr)
 
     if not class_result.IsValid() or class_result.GetError().Fail():
@@ -354,7 +348,7 @@ def inspect_object(
         return f"Error: Could not read class name for object at 0x{obj_addr:x}"
 
     # Step 3: Get object description
-    desc_expr = f'(const char *)[[(id)0x{obj_addr:x} description] UTF8String]'
+    desc_expr = f"(const char *)[[(id)0x{obj_addr:x} description] UTF8String]"
     desc_result = frame.EvaluateExpression(desc_expr)
 
     description = ""
@@ -379,7 +373,7 @@ def inspect_instance_command(
     debugger: lldb.SBDebugger,
     command: str,
     result: lldb.SBCommandReturnObject,
-    internal_dict: Dict[str, Any]
+    internal_dict: Dict[str, Any],
 ) -> None:
     """
     LLDB command to inspect an Objective-C object instance.
@@ -413,7 +407,5 @@ def inspect_instance_command(
 def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any]) -> None:
     """Initialize the oinstance command when this module is loaded in LLDB."""
     module_path = f"{__name__}.inspect_instance_command"
-    debugger.HandleCommand(
-        f'command script add -f {module_path} oinstance'
-    )
+    debugger.HandleCommand(f"command script add -f {module_path} oinstance")
     print(f"[lldb-objc v{__version__}] 'oinstance' installed - Inspect Objective-C object instances")

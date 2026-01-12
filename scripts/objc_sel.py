@@ -48,7 +48,7 @@ try:
 except ImportError:
     __version__ = "unknown"
 
-from objc_utils import unquote_string
+from objc_core import unquote_string
 
 # Type aliases
 TimingDict = Dict[str, Any]
@@ -59,7 +59,8 @@ CacheEntry = Dict[str, Any]
 DEFAULT_BATCH_SIZE = 50
 
 # Global cache for selector lists
-# Structure: {process_id: {class_name: {'instance': [(sel_name, imp_addr, category), ...], 'class': [...], 'timestamp': time}}}
+# Structure: {process_id: {class_name: {'instance': [(sel_name, imp_addr, cat), ...],
+#             'class': [...], 'timestamp': time}}}
 # category is None if method is not from a category (i.e., defined in the base class)
 _selector_cache: Dict[int, Dict[str, CacheEntry]] = {}
 
@@ -68,7 +69,7 @@ def find_objc_selectors(
     debugger: lldb.SBDebugger,
     command: str,
     result: lldb.SBCommandReturnObject,
-    internal_dict: Dict[str, Any]
+    internal_dict: Dict[str, Any],
 ) -> None:
     """
     Find selectors in an Objective-C class.
@@ -90,14 +91,14 @@ def find_objc_selectors(
 
     # Parse the input: ClassName [--reload] [--clear-cache] [--verbose] [--instance] [--class] [pattern]
     args = command.strip().split()
-    force_reload = '--reload' in args
-    clear_cache = '--clear-cache' in args
-    verbose = '--verbose' in args
-    instance_only = '--instance' in args
-    class_only = '--class' in args
+    force_reload = "--reload" in args
+    clear_cache = "--clear-cache" in args
+    verbose = "--verbose" in args
+    instance_only = "--instance" in args
+    class_only = "--class" in args
 
     # Remove flags from args
-    non_flag_args = [arg for arg in args if not arg.startswith('--')]
+    non_flag_args = [arg for arg in args if not arg.startswith("--")]
 
     if len(non_flag_args) < 1:
         # Handle --clear-cache without class name
@@ -139,12 +140,12 @@ def find_objc_selectors(
     # Initialize timing
     start_time = time.time()
     timing = {
-        'total': 0,
-        'setup': 0,
-        'instance_methods': 0,
-        'class_methods': 0,
-        'expression_count': 0,
-        'memory_read_count': 0
+        "total": 0,
+        "setup": 0,
+        "instance_methods": 0,
+        "class_methods": 0,
+        "expression_count": 0,
+        "memory_read_count": 0,
     }
 
     setup_start = time.time()
@@ -153,8 +154,8 @@ def find_objc_selectors(
     from_cache = False
     if not force_reload and pid in _selector_cache and class_name in _selector_cache[pid]:
         cache_entry = _selector_cache[pid][class_name]
-        all_instance_methods = cache_entry['instance']
-        all_class_methods = cache_entry['class']
+        all_instance_methods = cache_entry["instance"]
+        all_class_methods = cache_entry["class"]
 
         # Filter by pattern (methods are tuples of (sel_name, imp_addr, category))
         if pattern:
@@ -165,12 +166,12 @@ def find_objc_selectors(
             class_methods = all_class_methods
 
         from_cache = True
-        timing['total'] = time.time() - start_time
+        timing["total"] = time.time() - start_time
     else:
         # Get the class using NSClassFromString
         class_expr = f'(Class)NSClassFromString(@"{class_name}")'
         class_result = frame.EvaluateExpression(class_expr)
-        timing['expression_count'] += 1
+        timing["expression_count"] += 1
 
         if not class_result.IsValid() or class_result.GetError().Fail():
             result.SetError(f"Failed to resolve class '{class_name}': {class_result.GetError()}")
@@ -184,7 +185,7 @@ def find_objc_selectors(
 
         print(f"Class pointer: {class_result.GetValue()}")
 
-        timing['setup'] = time.time() - setup_start
+        timing["setup"] = time.time() - setup_start
 
         # Find instance methods (unless --class flag is set)
         instance_start = time.time()
@@ -192,42 +193,46 @@ def find_objc_selectors(
             all_instance_methods, inst_timing = get_methods_optimized(
                 frame, process, class_ptr, is_instance=True, resolve_categories=True
             )
-            timing['expression_count'] += inst_timing['expression_count']
-            timing['memory_read_count'] += inst_timing['memory_read_count']
+            timing["expression_count"] += inst_timing["expression_count"]
+            timing["memory_read_count"] += inst_timing["memory_read_count"]
         else:
             all_instance_methods = []
-            inst_timing = {'expression_count': 0, 'memory_read_count': 0}
-        timing['instance_methods'] = time.time() - instance_start
+            inst_timing = {"expression_count": 0, "memory_read_count": 0}
+        timing["instance_methods"] = time.time() - instance_start
 
         # Get metaclass for class methods (unless --instance flag is set)
         class_start = time.time()
         if not instance_only:
-            metaclass_expr = f'(Class)object_getClass((id)0x{class_ptr:x})'
+            metaclass_expr = f"(Class)object_getClass((id)0x{class_ptr:x})"
             metaclass_result = frame.EvaluateExpression(metaclass_expr)
-            timing['expression_count'] += 1
+            timing["expression_count"] += 1
 
             if metaclass_result.IsValid() and not metaclass_result.GetError().Fail():
                 metaclass_ptr = metaclass_result.GetValueAsUnsigned()
                 all_class_methods, cls_timing = get_methods_optimized(
-                    frame, process, metaclass_ptr, is_instance=False, resolve_categories=True
+                    frame,
+                    process,
+                    metaclass_ptr,
+                    is_instance=False,
+                    resolve_categories=True,
                 )
-                timing['expression_count'] += cls_timing['expression_count']
-                timing['memory_read_count'] += cls_timing['memory_read_count']
+                timing["expression_count"] += cls_timing["expression_count"]
+                timing["memory_read_count"] += cls_timing["memory_read_count"]
             else:
                 all_class_methods = []
         else:
             all_class_methods = []
-        timing['class_methods'] = time.time() - class_start
+        timing["class_methods"] = time.time() - class_start
 
-        timing['total'] = time.time() - start_time
+        timing["total"] = time.time() - start_time
 
         # Store in cache (unfiltered lists)
         if pid not in _selector_cache:
             _selector_cache[pid] = {}
         _selector_cache[pid][class_name] = {
-            'instance': all_instance_methods,
-            'class': all_class_methods,
-            'timestamp': time.time()
+            "instance": all_instance_methods,
+            "class": all_class_methods,
+            "timestamp": time.time(),
         }
 
         # Apply pattern filter (methods are tuples of (sel_name, imp_addr, category))
@@ -292,21 +297,21 @@ def find_objc_selectors(
         print()
         print(f"{'─' * 70}")
         if from_cache:
-            print(f"Performance Summary: (from cache)")
+            print("Performance Summary: (from cache)")
             print(f"  Total time:     {timing['total']:.3f}s")
             print(f"  Methods:        {total_unfiltered:,} total, {total:,} matched")
-            print(f"  Source:         Cached (use --reload to refresh)")
+            print("  Source:         Cached (use --reload to refresh)")
         else:
-            print(f"Performance Summary:")
+            print("Performance Summary:")
             print(f"  Total time:     {timing['total']:.2f}s")
             print(f"  Methods:        {total_unfiltered:,} total, {total:,} matched")
-            if timing['total'] > 0:
+            if timing["total"] > 0:
                 print(f"  Throughput:     {total_unfiltered / timing['total']:.0f} methods/sec")
-            print(f"\n  Timing breakdown:")
+            print("\n  Timing breakdown:")
             print(f"    Setup:            {timing['setup']:.3f}s")
             print(f"    Instance methods: {timing['instance_methods']:.3f}s")
             print(f"    Class methods:    {timing['class_methods']:.3f}s")
-            print(f"\n  Resource usage:")
+            print("\n  Resource usage:")
             print(f"    Expressions:  {timing['expression_count']:,}")
             print(f"    Memory reads: {timing['memory_read_count']:,}")
         print(f"{'─' * 70}")
@@ -319,6 +324,7 @@ def find_objc_selectors(
 
     result.SetStatus(lldb.eReturnStatusSuccessFinishResult)
 
+
 def matches_pattern(selector_name: str, pattern: Optional[str]) -> bool:
     """
     Check if selector name matches the pattern.
@@ -329,17 +335,17 @@ def matches_pattern(selector_name: str, pattern: Optional[str]) -> bool:
         return True
 
     # Check if pattern contains wildcard characters
-    has_wildcards = '*' in pattern or '?' in pattern
+    has_wildcards = "*" in pattern or "?" in pattern
 
     if has_wildcards:
         # Convert wildcard pattern to regex
         # Escape special regex characters except * and ?
         regex_pattern = re.escape(pattern)
         # Replace escaped wildcards with regex equivalents
-        regex_pattern = regex_pattern.replace(r'\*', '.*')
-        regex_pattern = regex_pattern.replace(r'\?', '.')
+        regex_pattern = regex_pattern.replace(r"\*", ".*")
+        regex_pattern = regex_pattern.replace(r"\?", ".")
         # Make it match the whole string and case-insensitive
-        regex_pattern = f'^{regex_pattern}$'
+        regex_pattern = f"^{regex_pattern}$"
         try:
             return bool(re.match(regex_pattern, selector_name, re.IGNORECASE))
         except re.error:
@@ -348,6 +354,7 @@ def matches_pattern(selector_name: str, pattern: Optional[str]) -> bool:
     else:
         # Simple substring matching (case-insensitive)
         return pattern.lower() in selector_name.lower()
+
 
 def build_selector_batch_expression(method_pointers: Tuple[int, ...]) -> str:
     """
@@ -372,28 +379,28 @@ def build_selector_batch_expression(method_pointers: Tuple[int, ...]) -> str:
 
     # Build expression using Objective-C block
     # Use sizeof(void*) to handle both 32-bit and 64-bit architectures
-    expr = f'''
+    expr = f"""
 (void *)(^{{
     void **info = (void **)malloc({batch_size * 2} * sizeof(void*));
     if (!info) return (void *)0;
-'''
+"""
 
     for i, method_ptr in enumerate(method_pointers):
         if method_ptr != 0:
-            expr += f'''
+            expr += f"""
     info[{i * 2}] = (void *)sel_getName((SEL)method_getName((void *)0x{method_ptr:x}));
     info[{i * 2 + 1}] = (void *)method_getImplementation((void *)0x{method_ptr:x});
-'''
+"""
         else:
-            expr += f'''
+            expr += f"""
     info[{i * 2}] = (void *)0;
     info[{i * 2 + 1}] = (void *)0;
-'''
+"""
 
-    expr += '''
+    expr += """
     return (void *)info;
 }())
-'''
+"""
 
     return expr
 
@@ -403,7 +410,7 @@ def get_methods_optimized(
     process: lldb.SBProcess,
     class_ptr: int,
     is_instance: bool = True,
-    resolve_categories: bool = False
+    resolve_categories: bool = False,
 ) -> Tuple[List[Tuple[str, int, Optional[str]]], TimingDict]:
     """
     Get all methods for a class using class_copyMethodList.
@@ -420,54 +427,51 @@ def get_methods_optimized(
     - Before: ~2N expression evaluations
     - After: ~(N/batch_size + 4) expression evaluations + ~(N/batch_size + 1) memory reads
     """
-    timing = {
-        'expression_count': 0,
-        'memory_read_count': 0
-    }
+    timing = {"expression_count": 0, "memory_read_count": 0}
 
     # Allocate space for method count
-    count_var_expr = f'(unsigned int *)malloc(sizeof(unsigned int))'
+    count_var_expr = "(unsigned int *)malloc(sizeof(unsigned int))"
     count_var_result = frame.EvaluateExpression(count_var_expr)
-    timing['expression_count'] += 1
+    timing["expression_count"] += 1
 
     if not count_var_result.IsValid() or count_var_result.GetError().Fail():
-        print(f"Warning: Failed to allocate count variable")
+        print("Warning: Failed to allocate count variable")
         return [], timing
 
     count_var_ptr = count_var_result.GetValueAsUnsigned()
 
     # Copy method list
-    method_list_expr = f'(void *)class_copyMethodList((Class)0x{class_ptr:x}, (unsigned int *)0x{count_var_ptr:x})'
+    method_list_expr = f"(void *)class_copyMethodList((Class)0x{class_ptr:x}, (unsigned int *)0x{count_var_ptr:x})"
     method_list_result = frame.EvaluateExpression(method_list_expr)
-    timing['expression_count'] += 1
+    timing["expression_count"] += 1
 
     if not method_list_result.IsValid() or method_list_result.GetError().Fail():
         print(f"Warning: class_copyMethodList failed: {method_list_result.GetError()}")
-        frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
-        timing['expression_count'] += 1
+        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        timing["expression_count"] += 1
         return [], timing
 
     method_list_ptr = method_list_result.GetValueAsUnsigned()
 
     # Read the count
-    count_read_expr = f'(unsigned int)(*(unsigned int *)0x{count_var_ptr:x})'
+    count_read_expr = f"(unsigned int)(*(unsigned int *)0x{count_var_ptr:x})"
     count_read_result = frame.EvaluateExpression(count_read_expr)
-    timing['expression_count'] += 1
+    timing["expression_count"] += 1
 
     if not count_read_result.IsValid() or count_read_result.GetError().Fail():
-        print(f"Warning: Failed to read method count")
+        print("Warning: Failed to read method count")
         if method_list_ptr != 0:
-            frame.EvaluateExpression(f'(void)free((void *)0x{method_list_ptr:x})')
-            timing['expression_count'] += 1
-        frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
-        timing['expression_count'] += 1
+            frame.EvaluateExpression(f"(void)free((void *)0x{method_list_ptr:x})")
+            timing["expression_count"] += 1
+        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        timing["expression_count"] += 1
         return [], timing
 
     method_count = count_read_result.GetValueAsUnsigned()
 
     if method_count == 0 or method_list_ptr == 0:
-        frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
-        timing['expression_count'] += 1
+        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        timing["expression_count"] += 1
         return [], timing
 
     # OPTIMIZATION: Bulk read the method pointer array
@@ -476,22 +480,22 @@ def get_methods_optimized(
 
     error = lldb.SBError()
     method_array_bytes = process.ReadMemory(method_list_ptr, array_size, error)
-    timing['memory_read_count'] += 1
+    timing["memory_read_count"] += 1
 
     if not error.Success():
         print(f"Warning: Failed to read method array from memory: {error}")
         if method_list_ptr != 0:
-            frame.EvaluateExpression(f'(void)free((void *)0x{method_list_ptr:x})')
-            timing['expression_count'] += 1
-        frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
-        timing['expression_count'] += 1
+            frame.EvaluateExpression(f"(void)free((void *)0x{method_list_ptr:x})")
+            timing["expression_count"] += 1
+        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        timing["expression_count"] += 1
         return [], timing
 
     # Parse method pointers in Python (fast - no LLDB overhead)
     if pointer_size == 8:
-        format_str = f'{method_count}Q'  # 64-bit unsigned pointers
+        format_str = f"{method_count}Q"  # 64-bit unsigned pointers
     else:
-        format_str = f'{method_count}I'  # 32-bit unsigned pointers
+        format_str = f"{method_count}I"  # 32-bit unsigned pointers
 
     method_pointers = struct.unpack(format_str, method_array_bytes)
 
@@ -507,7 +511,7 @@ def get_methods_optimized(
         # Build and execute batch expression
         batch_expr = build_selector_batch_expression(batch)
         batch_result = frame.EvaluateExpression(batch_expr)
-        timing['expression_count'] += 1
+        timing["expression_count"] += 1
 
         if not batch_result.IsValid() or batch_result.GetError().Fail():
             # Fallback: process each method individually
@@ -515,14 +519,14 @@ def get_methods_optimized(
                 if method_ptr == 0:
                     continue
                 # Get selector name
-                sel_name_expr = f'(const char *)sel_getName((SEL)method_getName((void *)0x{method_ptr:x}))'
+                sel_name_expr = f"(const char *)sel_getName((SEL)method_getName((void *)0x{method_ptr:x}))"
                 sel_name_result = frame.EvaluateExpression(sel_name_expr)
-                timing['expression_count'] += 1
+                timing["expression_count"] += 1
 
                 # Get IMP
-                imp_expr = f'(void *)method_getImplementation((void *)0x{method_ptr:x})'
+                imp_expr = f"(void *)method_getImplementation((void *)0x{method_ptr:x})"
                 imp_result = frame.EvaluateExpression(imp_expr)
-                timing['expression_count'] += 1
+                timing["expression_count"] += 1
 
                 if sel_name_result.IsValid() and not sel_name_result.GetError().Fail():
                     sel_name = sel_name_result.GetSummary()
@@ -540,11 +544,11 @@ def get_methods_optimized(
         # Now we have 2 pointers per method: sel_name_ptr and imp_ptr
         ptr_array_size = current_batch_size * 2 * pointer_size
         ptr_bytes = process.ReadMemory(info_ptr, ptr_array_size, error)
-        timing['memory_read_count'] += 1
+        timing["memory_read_count"] += 1
 
         if error.Success():
             # Parse pointers using correct format for architecture
-            ptr_format = f'{current_batch_size * 2}Q' if pointer_size == 8 else f'{current_batch_size * 2}I'
+            ptr_format = f"{current_batch_size * 2}Q" if pointer_size == 8 else f"{current_batch_size * 2}I"
             ptrs = struct.unpack(ptr_format, ptr_bytes)
 
             # Read each selector name string from memory
@@ -556,25 +560,26 @@ def get_methods_optimized(
                     continue
 
                 sel_name = process.ReadCStringFromMemory(sel_ptr, 256, error)
-                timing['memory_read_count'] += 1
+                timing["memory_read_count"] += 1
 
                 if error.Success() and sel_name:
                     selectors.append((sel_name, imp_addr, None))  # Category resolved later
 
         # Free the info buffer
-        frame.EvaluateExpression(f'(void)free((void *)0x{info_ptr:x})')
-        timing['expression_count'] += 1
+        frame.EvaluateExpression(f"(void)free((void *)0x{info_ptr:x})")
+        timing["expression_count"] += 1
 
     # Clean up allocated memory
     if method_list_ptr != 0:
-        frame.EvaluateExpression(f'(void)free((void *)0x{method_list_ptr:x})')
-        timing['expression_count'] += 1
-    frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
-    timing['expression_count'] += 1
+        frame.EvaluateExpression(f"(void)free((void *)0x{method_list_ptr:x})")
+        timing["expression_count"] += 1
+    frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+    timing["expression_count"] += 1
 
     # Optionally resolve category info from symbols
     if resolve_categories and selectors:
         from objc_utils import extract_category_from_symbol
+
         target = frame.GetThread().GetProcess().GetTarget()
         methods_with_categories = []
         for sel_name, imp_addr, _ in selectors:
@@ -597,7 +602,7 @@ def get_methods(
     frame: lldb.SBFrame,
     class_ptr: int,
     is_instance: bool = True,
-    pattern: Optional[str] = None
+    pattern: Optional[str] = None,
 ) -> List[str]:
     """
     Get all methods for a class using class_copyMethodList.
@@ -607,49 +612,47 @@ def get_methods(
     Use get_methods_optimized() for better performance.
     """
     # Allocate space for method count
-    count_var_expr = f'(unsigned int *)malloc(sizeof(unsigned int))'
+    count_var_expr = "(unsigned int *)malloc(sizeof(unsigned int))"
     count_var_result = frame.EvaluateExpression(count_var_expr)
 
     if not count_var_result.IsValid() or count_var_result.GetError().Fail():
-        print(f"Warning: Failed to allocate count variable")
+        print("Warning: Failed to allocate count variable")
         return []
 
     count_var_ptr = count_var_result.GetValueAsUnsigned()
 
     # Copy method list
-    method_list_expr = f'(void *)class_copyMethodList((Class)0x{class_ptr:x}, (unsigned int *)0x{count_var_ptr:x})'
+    method_list_expr = f"(void *)class_copyMethodList((Class)0x{class_ptr:x}, (unsigned int *)0x{count_var_ptr:x})"
     method_list_result = frame.EvaluateExpression(method_list_expr)
 
     if not method_list_result.IsValid() or method_list_result.GetError().Fail():
         print(f"Warning: class_copyMethodList failed: {method_list_result.GetError()}")
         # Clean up
-        frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
+        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
         return []
 
     method_list_ptr = method_list_result.GetValueAsUnsigned()
 
     # Read the count
-    count_read_expr = f'(unsigned int)(*(unsigned int *)0x{count_var_ptr:x})'
+    count_read_expr = f"(unsigned int)(*(unsigned int *)0x{count_var_ptr:x})"
     count_read_result = frame.EvaluateExpression(count_read_expr)
 
     if not count_read_result.IsValid() or count_read_result.GetError().Fail():
-        print(f"Warning: Failed to read method count")
+        print("Warning: Failed to read method count")
         # Clean up
         if method_list_ptr != 0:
-            frame.EvaluateExpression(f'(void)free((void *)0x{method_list_ptr:x})')
-        frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
+            frame.EvaluateExpression(f"(void)free((void *)0x{method_list_ptr:x})")
+        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
         return []
 
     method_count = count_read_result.GetValueAsUnsigned()
 
     # Collect selector names
     selectors = []
-    pointer_size = frame.GetModule().GetAddressByteSize()
 
     for i in range(method_count):
         # Get method at index
-        method_offset = i * pointer_size
-        method_ptr_expr = f'(void *)((void **)0x{method_list_ptr:x})[{i}]'
+        method_ptr_expr = f"(void *)((void **)0x{method_list_ptr:x})[{i}]"
         method_ptr_result = frame.EvaluateExpression(method_ptr_expr)
 
         if not method_ptr_result.IsValid() or method_ptr_result.GetError().Fail():
@@ -661,7 +664,7 @@ def get_methods(
             continue
 
         # Get selector name using method_getName
-        sel_name_expr = f'(const char *)sel_getName((SEL)method_getName((void *)0x{method_ptr:x}))'
+        sel_name_expr = f"(const char *)sel_getName((SEL)method_getName((void *)0x{method_ptr:x}))"
         sel_name_result = frame.EvaluateExpression(sel_name_expr)
 
         if sel_name_result.IsValid() and not sel_name_result.GetError().Fail():
@@ -675,10 +678,11 @@ def get_methods(
 
     # Clean up allocated memory
     if method_list_ptr != 0:
-        frame.EvaluateExpression(f'(void)free((void *)0x{method_list_ptr:x})')
-    frame.EvaluateExpression(f'(void)free((void *)0x{count_var_ptr:x})')
+        frame.EvaluateExpression(f"(void)free((void *)0x{method_list_ptr:x})")
+    frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
 
     return selectors
+
 
 def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any]) -> None:
     """Initialize the module by registering the command."""
@@ -686,6 +690,6 @@ def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any])
     debugger.HandleCommand(
         'command script add -h "Find Objective-C selectors (methods) for a class. '
         'Usage: osel ClassName [pattern]" '
-        f'-f {module_path} osel'
+        f"-f {module_path} osel"
     )
     print(f"[lldb-objc v{__version__}] 'osel' installed - Find selectors/methods for classes")

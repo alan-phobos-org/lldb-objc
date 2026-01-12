@@ -47,7 +47,7 @@ from objc_utils import (
     parse_method_signature,
     resolve_method_address,
     format_method_name,
-    get_arch_registers
+    get_arch_registers,
 )
 
 # Type aliases for clarity
@@ -70,33 +70,28 @@ def _get_watches_for_process(process: lldb.SBProcess) -> ProcessWatches:
 def _build_flags_description(info: WatchInfo) -> List[str]:
     """Build a flags description string from watch info dict."""
     flags = []
-    if info.get('minimal'):
-        flags.append('minimal')
-    elif info.get('detailed'):
-        flags.append('detailed')
-    if info.get('stack'):
-        flags.append('stack')
-    if info.get('count_limit', 0) > 0:
+    if info.get("minimal"):
+        flags.append("minimal")
+    elif info.get("detailed"):
+        flags.append("detailed")
+    if info.get("stack"):
+        flags.append("stack")
+    if info.get("count_limit", 0) > 0:
         flags.append(f"count={info['count_limit']}")
-    if info.get('condition'):
+    if info.get("condition"):
         flags.append(f"condition={info['condition']}")
     return flags
 
 
 def _get_arg_count_from_method(method_name: str) -> int:
     """Extract argument count from method name by counting colons in selector."""
-    if ' ' not in method_name:
+    if " " not in method_name:
         return 0
-    selector_part = method_name.split(' ', 1)[1].rstrip(']')
-    return selector_part.count(':')
+    selector_part = method_name.split(" ", 1)[1].rstrip("]")
+    return selector_part.count(":")
 
 
-def _get_arg_values(
-    frame: lldb.SBFrame,
-    process: lldb.SBProcess,
-    arg_regs: List[str],
-    arg_count: int
-) -> List[str]:
+def _get_arg_values(frame: lldb.SBFrame, process: lldb.SBProcess, arg_regs: List[str], arg_count: int) -> List[str]:
     """Get formatted argument values from registers."""
     args = []
     for reg_name in arg_regs[:arg_count]:
@@ -141,9 +136,11 @@ def get_caller_info(frame: lldb.SBFrame) -> Optional[str]:
 
     # Get offset within function
     pc = caller_frame.GetPC()
-    start_addr = caller_frame.GetSymbol().GetStartAddress().GetLoadAddress(
-        thread.GetProcess().GetTarget()
-    ) if caller_frame.GetSymbol().IsValid() else 0
+    start_addr = (
+        caller_frame.GetSymbol().GetStartAddress().GetLoadAddress(thread.GetProcess().GetTarget())
+        if caller_frame.GetSymbol().IsValid()
+        else 0
+    )
 
     if start_addr != 0:
         offset = pc - start_addr
@@ -152,11 +149,7 @@ def get_caller_info(frame: lldb.SBFrame) -> Optional[str]:
         return name
 
 
-def format_register_value(
-    frame: lldb.SBFrame,
-    reg_name: str,
-    process: lldb.SBProcess
-) -> Optional[str]:
+def format_register_value(frame: lldb.SBFrame, reg_name: str, process: lldb.SBProcess) -> Optional[str]:
     """
     Format a register value for display.
 
@@ -178,7 +171,7 @@ def watch_callback(
     frame: lldb.SBFrame,
     bp_loc: lldb.SBBreakpointLocation,
     extra_args: Any,
-    internal_dict: Dict[str, Any]
+    internal_dict: Dict[str, Any],
 ) -> bool:
     """
     Callback function called when a watched method is hit.
@@ -194,15 +187,15 @@ def watch_callback(
         return False
 
     watch_info = active_watches[bp_id]
-    method_name = watch_info['method_name']
-    is_detailed = watch_info.get('detailed', False)
-    show_stack = watch_info.get('stack', False)
-    is_minimal = watch_info.get('minimal', False)
-    count_limit = watch_info.get('count_limit', 0)
+    method_name = watch_info["method_name"]
+    is_detailed = watch_info.get("detailed", False)
+    show_stack = watch_info.get("stack", False)
+    is_minimal = watch_info.get("minimal", False)
+    count_limit = watch_info.get("count_limit", 0)
 
     # Increment hit count
-    watch_info['hit_count'] = watch_info.get('hit_count', 0) + 1
-    hit_count = watch_info['hit_count']
+    watch_info["hit_count"] = watch_info.get("hit_count", 0) + 1
+    hit_count = watch_info["hit_count"]
 
     # Common setup
     timestamp = get_timestamp()
@@ -276,7 +269,7 @@ def _parse_command_args(command: str) -> Tuple[Optional[List[str]], Optional[str
 
 
 def _parse_flags(
-    args: List[str]
+    args: List[str],
 ) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str]]:
     """
     Parse flags from argument list.
@@ -285,11 +278,11 @@ def _parse_flags(
         Tuple of (flags_dict, method_signature, error_message)
     """
     flags = {
-        'detailed': False,
-        'stack': False,
-        'minimal': False,
-        'count_limit': 0,
-        'condition': None
+        "detailed": False,
+        "stack": False,
+        "minimal": False,
+        "count_limit": 0,
+        "condition": None,
     }
     method_signature = None
 
@@ -297,39 +290,47 @@ def _parse_flags(
     while i < len(args):
         arg = args[i]
 
-        if arg == '--detailed':
-            flags['detailed'] = True
-        elif arg == '--stack':
-            flags['stack'] = True
-        elif arg == '--minimal':
-            flags['minimal'] = True
-        elif arg == '--once':
-            flags['count_limit'] = 1
-        elif arg.startswith('--count='):
+        if arg == "--detailed":
+            flags["detailed"] = True
+        elif arg == "--stack":
+            flags["stack"] = True
+        elif arg == "--minimal":
+            flags["minimal"] = True
+        elif arg == "--once":
+            flags["count_limit"] = 1
+        elif arg.startswith("--count="):
             try:
-                flags['count_limit'] = int(arg.split('=')[1])
-                if flags['count_limit'] < 1:
-                    return None, None, "--count value must be a positive integer (got: {})".format(flags['count_limit'])
+                flags["count_limit"] = int(arg.split("=")[1])
+                if flags["count_limit"] < 1:
+                    return (
+                        None,
+                        None,
+                        "--count value must be a positive integer (got: {})".format(flags["count_limit"]),
+                    )
             except ValueError:
                 return None, None, "Invalid --count value: must be an integer"
-        elif arg == '--count' and i + 1 < len(args):
+        elif arg == "--count" and i + 1 < len(args):
             try:
-                flags['count_limit'] = int(args[i + 1])
-                if flags['count_limit'] < 1:
-                    return None, None, "--count value must be a positive integer (got: {})".format(flags['count_limit'])
+                flags["count_limit"] = int(args[i + 1])
+                if flags["count_limit"] < 1:
+                    return (
+                        None,
+                        None,
+                        "--count value must be a positive integer (got: {})".format(flags["count_limit"]),
+                    )
                 i += 1
             except ValueError:
                 return None, None, "Invalid --count value: must be an integer"
-        elif arg.startswith('--condition='):
-            flags['condition'] = arg.split('=', 1)[1]
-        elif arg == '--condition' and i + 1 < len(args):
-            flags['condition'] = args[i + 1]
+        elif arg.startswith("--condition="):
+            flags["condition"] = arg.split("=", 1)[1]
+        elif arg == "--condition" and i + 1 < len(args):
+            flags["condition"] = args[i + 1]
             i += 1
-        elif arg.startswith('-[') or arg.startswith('+['):
+        elif arg.startswith("-[") or arg.startswith("+["):
             # Method signature - collect remaining args
-            method_signature = ' '.join(args[i:])
+            method_signature = " ".join(args[i:])
             break
-        elif arg.startswith('--'):
+        elif arg.startswith("--"):
             return None, None, f"Unknown flag: {arg}"
 
         i += 1
@@ -341,7 +342,7 @@ def watch_objc_method(
     debugger: lldb.SBDebugger,
     command: str,
     result: lldb.SBCommandReturnObject,
-    internal_dict: Dict[str, Any]
+    internal_dict: Dict[str, Any],
 ) -> None:
     """
     Set an auto-logging breakpoint on an Objective-C method.
@@ -365,10 +366,10 @@ def watch_objc_method(
         return
 
     # Handle subcommands
-    if args[0] == 'list':
+    if args[0] == "list":
         list_watches(process, result)
         return
-    elif args[0] == 'clear':
+    elif args[0] == "clear":
         clear_watches(target, process, result)
         return
 
@@ -421,8 +422,8 @@ def watch_objc_method(
     breakpoint.AddName(f"owatch:{method_name}")
 
     # Set condition if provided
-    if flags['condition']:
-        breakpoint.SetCondition(flags['condition'])
+    if flags["condition"]:
+        breakpoint.SetCondition(flags["condition"])
 
     # Set up the callback
     # Use SetScriptCallbackBody to embed the callback directly
@@ -444,14 +445,14 @@ return objc_watch.watch_callback(frame, bp_loc, extra_args, internal_dict)
     bp_id = breakpoint.GetID()
     active_watches = _get_watches_for_process(process)
     active_watches[bp_id] = {
-        'method_name': method_name,
-        'detailed': flags['detailed'],
-        'stack': flags['stack'],
-        'minimal': flags['minimal'],
-        'count_limit': flags['count_limit'],
-        'hit_count': 0,
-        'condition': flags['condition'],
-        'imp_addr': imp_addr
+        "method_name": method_name,
+        "detailed": flags["detailed"],
+        "stack": flags["stack"],
+        "minimal": flags["minimal"],
+        "count_limit": flags["count_limit"],
+        "hit_count": 0,
+        "condition": flags["condition"],
+        "imp_addr": imp_addr,
     }
 
     # Print confirmation
@@ -476,8 +477,8 @@ def list_watches(process: lldb.SBProcess, result: lldb.SBCommandReturnObject) ->
 
     print(f"Active watches ({len(active_watches)}):")
     for bp_id, info in active_watches.items():
-        method_name = info['method_name']
-        hit_count = info.get('hit_count', 0)
+        method_name = info["method_name"]
+        hit_count = info.get("hit_count", 0)
 
         flags = _build_flags_description(info)
         flags_str = f" \033[90m({', '.join(flags)})\033[0m" if flags else ""
@@ -488,11 +489,7 @@ def list_watches(process: lldb.SBProcess, result: lldb.SBCommandReturnObject) ->
     result.SetStatus(lldb.eReturnStatusSuccessFinishResult)
 
 
-def clear_watches(
-    target: lldb.SBTarget,
-    process: lldb.SBProcess,
-    result: lldb.SBCommandReturnObject
-) -> None:
+def clear_watches(target: lldb.SBTarget, process: lldb.SBProcess, result: lldb.SBCommandReturnObject) -> None:
     """Remove all active watches for the current process."""
     active_watches = _get_watches_for_process(process)
 
@@ -517,8 +514,6 @@ def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any])
     """Initialize the module by registering the command."""
     module_path = f"{__name__}.watch_objc_method"
     debugger.HandleCommand(
-        'command script add -h "Watch Objective-C methods with auto-logging breakpoints. '
-        'Usage: owatch -[ClassName selector:] [--detailed|--minimal|--stack|--once|--count=N|--condition=X] or owatch list|clear" '
-        f'-f {module_path} owatch'
+        f'command script add -h "Watch Objective-C methods with auto-logging breakpoints" -f {module_path} owatch'
     )
     print(f"[lldb-objc v{__version__}] 'owatch' installed - Auto-logging breakpoints for method watching")

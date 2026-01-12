@@ -28,13 +28,7 @@ except ImportError:
     __version__ = "unknown"
 
 # Import pure Python utilities from objc_core
-from objc_core import (
-    unquote_string,
-    parse_method_signature,
-    format_method_name,
-    extract_inherited_class,
-    extract_category_from_symbol
-)
+from objc_core import extract_inherited_class
 
 
 def resolve_method_address(
@@ -42,7 +36,7 @@ def resolve_method_address(
     class_name: str,
     selector: str,
     is_instance_method: bool,
-    verbose: bool = False
+    verbose: bool = False,
 ) -> Tuple[lldb.SBAddress, int, int, Optional[str]]:
     """
     Resolve an Objective-C method to its implementation address.
@@ -75,7 +69,12 @@ def resolve_method_address(
     class_result = frame.EvaluateExpression(class_expr)
 
     if not class_result.IsValid() or class_result.GetError().Fail():
-        return invalid_addr, 0, 0, f"Failed to resolve class '{class_name}': {class_result.GetError()}"
+        return (
+            invalid_addr,
+            0,
+            0,
+            f"Failed to resolve class '{class_name}': {class_result.GetError()}",
+        )
 
     class_ptr = class_result.GetValueAsUnsigned()
 
@@ -90,7 +89,12 @@ def resolve_method_address(
     sel_result = frame.EvaluateExpression(sel_expr)
 
     if not sel_result.IsValid() or sel_result.GetError().Fail():
-        return invalid_addr, class_ptr, 0, f"Failed to resolve selector '{selector}': {sel_result.GetError()}"
+        return (
+            invalid_addr,
+            class_ptr,
+            0,
+            f"Failed to resolve selector '{selector}': {sel_result.GetError()}",
+        )
 
     sel_ptr = sel_result.GetValueAsUnsigned()
 
@@ -103,20 +107,30 @@ def resolve_method_address(
     # Step 3: For class methods, get the metaclass
     lookup_class_ptr = class_ptr
     if not is_instance_method:
-        metaclass_expr = f'(Class)object_getClass((id)0x{class_ptr:x})'
+        metaclass_expr = f"(Class)object_getClass((id)0x{class_ptr:x})"
         metaclass_result = frame.EvaluateExpression(metaclass_expr)
 
         if not metaclass_result.IsValid() or metaclass_result.GetError().Fail():
-            return invalid_addr, class_ptr, sel_ptr, f"Failed to get metaclass: {metaclass_result.GetError()}"
+            return (
+                invalid_addr,
+                class_ptr,
+                sel_ptr,
+                f"Failed to get metaclass: {metaclass_result.GetError()}",
+            )
 
         lookup_class_ptr = metaclass_result.GetValueAsUnsigned()
 
     # Step 4: Get the method implementation using class_getMethodImplementation
-    imp_expr = f'(void *)class_getMethodImplementation((Class)0x{lookup_class_ptr:x}, (SEL)0x{sel_ptr:x})'
+    imp_expr = f"(void *)class_getMethodImplementation((Class)0x{lookup_class_ptr:x}, (SEL)0x{sel_ptr:x})"
     imp_result = frame.EvaluateExpression(imp_expr)
 
     if not imp_result.IsValid() or imp_result.GetError().Fail():
-        return invalid_addr, class_ptr, sel_ptr, f"Failed to get method implementation: {imp_result.GetError()}"
+        return (
+            invalid_addr,
+            class_ptr,
+            sel_ptr,
+            f"Failed to get method implementation: {imp_result.GetError()}",
+        )
 
     imp_addr = imp_result.GetValueAsUnsigned()
 
@@ -130,44 +144,49 @@ def resolve_method_address(
     inherited_from = None
 
     if not addr.IsValid():
-        return invalid_addr, class_ptr, sel_ptr, f"Failed to resolve load address 0x{imp_addr:x} to valid address"
+        return (
+            invalid_addr,
+            class_ptr,
+            sel_ptr,
+            f"Failed to resolve load address 0x{imp_addr:x} to valid address",
+        )
 
     symbol = addr.GetSymbol()
     if symbol.IsValid():
         symbol_name = symbol.GetName()
         if symbol_name:
             # Check for forwarding stub
-            if 'msgForward' in symbol_name:
+            if "msgForward" in symbol_name:
                 if verbose:
                     print(f"  IMP: {imp_result.GetValue()}")
                 method_type = "instance" if is_instance_method else "class"
-                return invalid_addr, class_ptr, sel_ptr, (
-                    f"Method not implemented: {method_type} method '{selector}' "
-                    f"on class '{class_name}' resolves to forwarding stub ({symbol_name})"
+                return (
+                    invalid_addr,
+                    class_ptr,
+                    sel_ptr,
+                    (
+                        f"Method not implemented: {method_type} method '{selector}' "
+                        f"on class '{class_name}' resolves to forwarding stub ({symbol_name})"
+                    ),
                 )
 
             # Check if method is inherited from a superclass
             # Symbol format: +[ClassName selector] or -[ClassName selector]
-            inherited_from = extract_inherited_class(
-                symbol_name, class_name, selector, is_instance_method
-            )
+            inherited_from = extract_inherited_class(symbol_name, class_name, selector, is_instance_method)
 
     if verbose:
         if inherited_from:
-            prefix = '-' if is_instance_method else '+'
-            print(f"  IMP: {imp_result.GetValue()} \033[90m(inherited from {prefix}[{inherited_from} {selector}])\033[0m")
+            prefix = "-" if is_instance_method else "+"
+            print(
+                f"  IMP: {imp_result.GetValue()} \033[90m(inherited from {prefix}[{inherited_from} {selector}])\033[0m"
+            )
         else:
             print(f"  IMP: {imp_result.GetValue()}")
 
     return addr, class_ptr, sel_ptr, None
 
 
-def detect_method_type(
-    frame: lldb.SBFrame,
-    class_name: str,
-    selector: str,
-    verbose: bool = False
-) -> bool:
+def detect_method_type(frame: lldb.SBFrame, class_name: str, selector: str, verbose: bool = False) -> bool:
     """
     Auto-detect whether a method is a class method (+) or instance method (-).
 
@@ -242,9 +261,9 @@ def get_arch_registers(frame: lldb.SBFrame) -> Tuple[str, str, List[str]]:
     target = frame.GetThread().GetProcess().GetTarget()
     triple = target.GetTriple()
 
-    if 'arm64' in triple or 'aarch64' in triple:
+    if "arm64" in triple or "aarch64" in triple:
         # ARM64: x0=self, x1=_cmd, x2-x7=args
-        return ('x0', 'x1', ['x2', 'x3', 'x4', 'x5', 'x6', 'x7'])
+        return ("x0", "x1", ["x2", "x3", "x4", "x5", "x6", "x7"])
     else:
         # x86_64: rdi=self, rsi=_cmd, rdx, rcx, r8, r9=args
-        return ('rdi', 'rsi', ['rdx', 'rcx', 'r8', 'r9'])
+        return ("rdi", "rsi", ["rdx", "rcx", "r8", "r9"])

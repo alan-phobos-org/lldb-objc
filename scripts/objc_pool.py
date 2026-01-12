@@ -30,9 +30,7 @@ except ImportError:
 
 
 def find_in_autorelease_pool(
-    frame: lldb.SBFrame,
-    class_name: str,
-    verbose: bool = False
+    frame: lldb.SBFrame, class_name: str, verbose: bool = False
 ) -> Tuple[List[Tuple[int, str]], str]:
     """
     Find instances of a class by scanning autorelease pools.
@@ -81,7 +79,7 @@ def find_in_autorelease_pool(
         """
     else:
         # Let the output go to stderr naturally
-        pool_expr = '(const char *)_objc_autoreleasePoolPrint()'
+        pool_expr = "(const char *)_objc_autoreleasePoolPrint()"
 
     pool_result = frame.EvaluateExpression(pool_expr)
 
@@ -112,22 +110,22 @@ def find_in_autorelease_pool(
     collected_addresses = set()
 
     # Look for lines with actual object pointers (after the slot address)
-    for line in pool_info.split('\n'):
+    for line in pool_info.split("\n"):
         # Skip empty lines, headers, and special markers
         if not line.strip():
             continue
-        if 'AUTORELEASE POOLS' in line or 'releases pending' in line or '####' in line:
+        if "AUTORELEASE POOLS" in line or "releases pending" in line or "####" in line:
             continue
 
         # Parse lines like: "objc[PID]: [slot_addr]  object_addr  ..."
         # or: "[slot_addr]  object_addr  ..."
         # Look for a hex address that's not a PAGE marker, POOL marker, or dots
-        match = re.search(r'\[0x[0-9a-fA-F]+\]\s+(0x[0-9a-fA-F]+)', line)
+        match = re.search(r"\[0x[0-9a-fA-F]+\]\s+(0x[0-9a-fA-F]+)", line)
         if match:
             addr_str = match.group(1)
 
             # Skip if this line is a PAGE or POOL marker
-            if 'PAGE' in line or ('####' in line and 'POOL' in line):
+            if "PAGE" in line or ("####" in line and "POOL" in line):
                 continue
 
             try:
@@ -140,14 +138,14 @@ def find_in_autorelease_pool(
 
             # Check if this is an instance of our target class
             # Use isKindOfClass to support subclasses
-            check_expr = f'(BOOL)[(id)0x{addr:x} isKindOfClass:(Class)0x{class_ptr:x}]'
+            check_expr = f"(BOOL)[(id)0x{addr:x} isKindOfClass:(Class)0x{class_ptr:x}]"
             check_result = frame.EvaluateExpression(check_expr)
 
             if check_result.IsValid() and check_result.GetValueAsUnsigned() == 1:
                 collected_addresses.add(addr)
 
                 # Get description
-                desc_expr = f'(const char *)[[(id)0x{addr:x} description] UTF8String]'
+                desc_expr = f"(const char *)[[(id)0x{addr:x} description] UTF8String]"
                 desc_result = frame.EvaluateExpression(desc_expr)
 
                 description = "instance"
@@ -168,7 +166,7 @@ def find_pool_instances_command(
     debugger: lldb.SBDebugger,
     command: str,
     result: lldb.SBCommandReturnObject,
-    internal_dict: Dict[str, Any]
+    internal_dict: Dict[str, Any],
 ) -> None:
     """
     LLDB command to find instances of an Objective-C class in autorelease pools.
@@ -191,7 +189,7 @@ def find_pool_instances_command(
 
     # Check for --verbose flag
     verbose = False
-    if args[0] == '--verbose':
+    if args[0] == "--verbose":
         verbose = True
         args = args[1:]
 
@@ -220,7 +218,7 @@ def find_pool_instances_command(
     # Display results
     for addr, description in instances:
         # Get the actual class of this instance
-        class_expr = f'(const char *)class_getName((Class)object_getClass((id)0x{addr:x}))'
+        class_expr = f"(const char *)class_getName((Class)object_getClass((id)0x{addr:x}))"
         class_result = frame.EvaluateExpression(class_expr)
 
         actual_class = class_name  # Default to searched class
@@ -245,7 +243,5 @@ def find_pool_instances_command(
 def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any]) -> None:
     """Initialize the opool command when this module is loaded in LLDB."""
     module_path = f"{__name__}.find_pool_instances_command"
-    debugger.HandleCommand(
-        f'command script add -f {module_path} opool'
-    )
+    debugger.HandleCommand(f"command script add -f {module_path} opool")
     print(f"[lldb-objc v{__version__}] 'opool' installed - Find instances in autorelease pools")

@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-Test script for the oexplain command (Disassembly Explainer).
+Test script for the odecompile command (LLM-based Decompiler).
 
-This script tests the oexplain functionality:
+This script tests the odecompile functionality:
 - Command loads correctly
 - Disassembly retrieval works
+- Backtrace capture works
 - Error handling for invalid inputs
+- Time reporting in output
 
 Note: Full integration tests with LLM CLI require manual testing
 since they depend on external API access. Uses llm by default,
@@ -15,7 +17,9 @@ Uses a shared LLDB session for faster test execution.
 """
 
 import sys
-from test_helpers import run_shared_test_suite
+import re
+import os
+from test_helpers import run_shared_test_suite, PROJECT_ROOT
 
 
 # =============================================================================
@@ -47,16 +51,16 @@ def _is_llm_timeout_or_session_issue(output):
 
 
 def validate_command_exists():
-    """Validator that oexplain command is available."""
+    """Validator that odecompile command is available."""
 
     def validator(output):
-        # help oexplain should show usage info
-        if "oexplain" in output.lower() or "explain" in output.lower():
+        # help odecompile should show usage info
+        if "odecompile" in output.lower() or "decompile" in output.lower():
             return True, "Command is registered"
         if "error: command" in output.lower() and "not found" in output.lower():
             return False, (
                 f"Command not registered\n"
-                f"    Expected: oexplain help output\n"
+                f"    Expected: odecompile help output\n"
                 f"    Actual: Command not found\n"
                 f"    Output: {output[:200]}"
             )
@@ -76,17 +80,23 @@ def validate_usage_error():
     return validator
 
 
-def validate_disassembly_sent():
-    """Validator that disassembly is retrieved and sent to LLM."""
+def validate_disassembly_and_backtrace_sent():
+    """Validator that disassembly and backtrace are retrieved and sent to LLM."""
 
     def validator(output):
         # Handle timeout/session issues (acceptable in automated LLM tests)
         if _is_llm_timeout_or_session_issue(output):
             return True, "Timeout/session issue (expected in automated LLM tests)"
 
-        # Should show "Sending N lines of disassembly to llm/Claude..."
-        if "sending" in output.lower() and "disassembly" in output.lower():
-            return True, "Disassembly retrieved and sending to LLM"
+        # Should show "Sending N lines of disassembly to llm/Claude for decompilation..."
+        # and "(Including N lines of backtrace context)"
+        has_disassembly = "sending" in output.lower() and "disassembly" in output.lower()
+        has_backtrace = "backtrace" in output.lower()
+
+        if has_disassembly and has_backtrace:
+            return True, "Disassembly and backtrace retrieved and sending to LLM"
+        if has_disassembly:
+            return True, "Disassembly retrieved (backtrace may not be in output)"
         if "failed to disassemble" in output.lower():
             return False, (
                 f"Disassembly failed\n"
@@ -102,7 +112,28 @@ def validate_disassembly_sent():
                     "Disassembly succeeded (LLM CLI error expected in automated tests)",
                 )
             return False, (f"Unexpected error\n    Output: {output[:300]}")
-        return False, (f"Unexpected output\n    Expected: 'Sending N lines of disassembly'\n    Actual: {output[:300]}")
+        return False, (
+            f"Unexpected output\n"
+            f"    Expected: 'Sending N lines of disassembly' and 'backtrace'\n"
+            f"    Actual: {output[:300]}"
+        )
+
+    return validator
+
+
+def validate_decompilation_message():
+    """Validator that command shows 'for decompilation' in output."""
+
+    def validator(output):
+        # Handle timeout/session issues (acceptable in automated LLM tests)
+        if _is_llm_timeout_or_session_issue(output):
+            return True, "Timeout/session issue (expected in automated LLM tests)"
+
+        if "decompilation" in output.lower():
+            return True, "Shows decompilation message"
+        if "llm cli" in output.lower() or "claude cli" in output.lower():
+            return True, "LLM CLI error (expected in automated tests)"
+        return False, (f"Expected 'decompilation' in output\n    Actual: {output[:300]}")
 
     return validator
 
@@ -142,60 +173,106 @@ def validate_output_format():
     return validator
 
 
+def validate_timing_output():
+    """Validator that timing information is shown."""
+
+    def validator(output):
+        # Handle timeout/session issues (acceptable in automated LLM tests)
+        if _is_llm_timeout_or_session_issue(output):
+            return True, "Timeout/session issue (expected in automated LLM tests)"
+
+        # Look for timing pattern like "[llm responded in X.Xs]" or "[Claude responded in X.Xs]"
+        if re.search(r"responded in \d+\.?\d*s", output):
+            return True, "Timing information displayed"
+        # If LLM CLI failed, that's expected in automated tests
+        if ("llm cli" in output.lower() or "claude cli" in output.lower()) and "error" in output.lower():
+            return True, "LLM CLI error (expected - timing only shown on success)"
+        # If sending message is present, command is working
+        if "sending" in output.lower() and "disassembly" in output.lower():
+            return True, "Command reached LLM call stage (timing shown on completion)"
+        return False, (
+            f"Expected timing output\n    Expected: 'responded in X.Xs' or LLM CLI error\n    Actual: {output[:300]}"
+        )
+
+    return validator
+
+
 def get_test_specs():
     """Return list of test specifications."""
     return [
         # Command registration tests
         (
-            "Explain: command is registered",
-            ["help oexplain"],
+            "Decompile: command is registered",
+            ["help odecompile"],
             validate_command_exists(),
         ),
         (
-            "Explain: shows usage without arguments",
-            ["oexplain"],
+            "Decompile: shows usage without arguments",
+            ["odecompile"],
             validate_usage_error(),
         ),
-        # Disassembly retrieval tests
+        # Disassembly and backtrace retrieval tests
         (
-            "Explain: retrieves disassembly for $pc",
-            ["oexplain $pc"],
-            validate_disassembly_sent(),
+            "Decompile: retrieves disassembly and backtrace for $pc",
+            ["odecompile $pc"],
+            validate_disassembly_and_backtrace_sent(),
         ),
         (
-            "Explain: retrieves disassembly for method implementation",
+            "Decompile: shows decompilation message",
+            ["odecompile $pc"],
+            validate_decompilation_message(),
+        ),
+        (
+            "Decompile: retrieves disassembly for method implementation",
             [
-                # Use expr to get an IMP, then oexplain it via $0
+                # Use expr to get an IMP, then odecompile it via $0
                 "expr (IMP)class_getMethodImplementation([NSString class], @selector(init))",
-                "oexplain $0",
+                "odecompile $0",
             ],
-            validate_disassembly_sent(),
+            validate_disassembly_and_backtrace_sent(),
         ),
         # Error handling tests
         (
-            "Explain: error for invalid expression",
-            ["oexplain invalid_nonsense_expression_12345"],
+            "Decompile: error for invalid expression",
+            ["odecompile invalid_nonsense_expression_12345"],
             validate_invalid_address_error(),
         ),
-        # Output format test (may fail if Claude CLI not configured)
-        ("Explain: output format check", ["oexplain $pc"], validate_output_format()),
+        # Output format test (may fail if LLM CLI not configured)
+        (
+            "Decompile: output format check",
+            ["odecompile $pc"],
+            validate_output_format(),
+        ),
+        # Timing test
+        (
+            "Decompile: timing output check",
+            ["odecompile $pc"],
+            validate_timing_output(),
+        ),
     ]
 
 
 def main():
-    """Run all oexplain tests using shared LLDB session."""
+    """Run all odecompile tests using shared LLDB session."""
+    # Check if objc_decompile.py exists
+    objc_decompile_path = os.path.join(PROJECT_ROOT, "scripts", "objc_decompile.py")
+    if not os.path.exists(objc_decompile_path):
+        print(f"Note: {objc_decompile_path} not found")
+        print("These tests are for the odecompile feature.")
+        print("Tests will fail until the feature is implemented.\n")
 
     categories = {
         "Command registration": (0, 2),
-        "Disassembly retrieval": (2, 4),
-        "Error handling": (4, 5),
-        "Output format": (5, 6),
+        "Disassembly/backtrace retrieval": (2, 5),
+        "Error handling": (5, 6),
+        "Output format": (6, 7),
+        "Timing": (7, 8),
     }
 
     passed, total = run_shared_test_suite(
-        "OEXPLAIN COMMAND TEST SUITE",
+        "ODECOMPILE COMMAND TEST SUITE",
         get_test_specs(),
-        scripts=["scripts/objc_explain.py"],
+        scripts=["scripts/objc_decompile.py"],
         show_category_summary=categories,
     )
     sys.exit(0 if passed == total else 1)

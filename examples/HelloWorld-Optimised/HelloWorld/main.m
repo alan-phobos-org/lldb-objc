@@ -1,10 +1,13 @@
 #import <Foundation/Foundation.h>
 
+// Same code as HelloWorld but will be compiled with heavy optimizations
+// and stripped of symbols to test LLDB command robustness
+
 @interface Greeter : NSObject {
     NSString *_greeting;
     NSDictionary *_metadata;
     NSInteger _count;
-    NSDictionary *_nestedData;  // Complex nested structure for testing ocls
+    NSDictionary *_nestedData;
 }
 - (void)sayHello:(NSString *)name;
 - (NSInteger)add:(NSInteger)a to:(NSInteger)b;
@@ -18,7 +21,6 @@
         _greeting = @"Hello";
         _count = 0;
 
-        // Create nested data: NSDictionary containing 3 NSArrays of 5 strings each
         _nestedData = @{
             @"fruits": @[@"apple", @"banana", @"cherry", @"date", @"elderberry"],
             @"colors": @[@"red", @"green", @"blue", @"yellow", @"purple"],
@@ -49,7 +51,7 @@
 
 int main(int argc, const char * argv[]) {
     @autoreleasepool {
-        NSLog(@"Starting HelloWorld...");
+        NSLog(@"Starting HelloWorld (Optimised)...");
 
         Greeter *greeter = [[Greeter alloc] init];
         [greeter sayHello:@"World"];

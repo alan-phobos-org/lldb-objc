@@ -17,12 +17,11 @@ from __future__ import annotations
 
 import lldb
 import os
-import subprocess
 import sys
 import time
 from typing import Any, Dict
 
-# Add the script directory to path for version import
+# Add the script directory to path for imports
 script_dir = os.path.dirname(os.path.abspath(__file__))
 if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
@@ -32,113 +31,40 @@ try:
 except ImportError:
     __version__ = "unknown"
 
-
-CLAUDE_PROMPT = """Here is some arm64 disassembly. Explain very concisely what this function does as you would to a security researcher. Avoid any boilerplate blurb. Include a compact view of the first 5 functions it will call."""
-
-CLAUDE_ANNOTATE_PROMPT = """Here is some arm64 disassembly. Reproduce the disassembly exactly, but add concise high-level annotations as comments on lines where the purpose isn't obvious. Focus on what's happening semantically (e.g., "// get string length", "// check for nil", "// call objc_msgSend with selector"). Skip trivial operations like stack frame setup. Keep annotations brief."""
-
-
-def get_disassembly(debugger: lldb.SBDebugger, address: str) -> tuple[bool, str]:
-    """
-    Get disassembly at the given address using LLDB's disass command.
-
-    Args:
-        debugger: LLDB debugger instance
-        address: Address expression to disassemble
-
-    Returns:
-        (success, output) tuple
-    """
-    result = lldb.SBCommandReturnObject()
-    ci = debugger.GetCommandInterpreter()
-
-    # Use disass -a to disassemble at address
-    ci.HandleCommand(f"disass -a {address}", result)
-
-    if result.Succeeded():
-        return True, result.GetOutput()
-    else:
-        return False, result.GetError()
+from objc_llm import (
+    get_disassembly,
+    build_context,
+    call_llm,
+    call_claude,
+    format_output,
+)
 
 
-def call_llm(disassembly: str, prompt: str = CLAUDE_PROMPT) -> tuple[bool, str]:
-    """
-    Send disassembly to llm CLI for explanation.
+EXPLAIN_PROMPT = """You are an expert reverse engineer. Given the following \
+arm64 disassembly and context, explain very concisely what this function does \
+as you would to a security researcher. Avoid boilerplate. Include a compact \
+view of the first 5 functions it will call.
 
-    Args:
-        disassembly: The disassembly text to explain
-        prompt: The prompt to use (default: CLAUDE_PROMPT)
+{context}
 
-    Returns:
-        (success, output) tuple
-    """
-    full_prompt = f"{prompt}\n\n{disassembly}"
+DISASSEMBLY:
+{disassembly}
 
-    try:
-        result = subprocess.run(
-            ["llm", full_prompt],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
+Explain concisely:"""
 
-        if result.returncode == 0:
-            return True, result.stdout
-        else:
-            error_msg = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
-            return False, f"llm CLI error: {error_msg}"
+ANNOTATE_PROMPT = """You are an expert reverse engineer. Given the following \
+arm64 disassembly and context, reproduce the disassembly exactly, but add \
+concise high-level annotations as comments on lines where the purpose isn't \
+obvious. Focus on what's happening semantically (e.g., "// get string length", \
+"// check for nil", "// call objc_msgSend with selector"). Skip trivial \
+operations like stack frame setup. Keep annotations brief.
 
-    except subprocess.TimeoutExpired:
-        return False, "Error: llm CLI timed out after 120 seconds"
-    except FileNotFoundError:
-        return False, "Error: 'llm' CLI not found. Install with: pip install llm"
-    except Exception as e:
-        return False, f"Error calling llm: {e}"
+{context}
 
+DISASSEMBLY:
+{disassembly}
 
-def call_claude(disassembly: str, prompt: str = CLAUDE_PROMPT) -> tuple[bool, str]:
-    """
-    Send disassembly to Claude via CLI for explanation.
-
-    Args:
-        disassembly: The disassembly text to explain
-        prompt: The prompt to use (default: CLAUDE_PROMPT)
-
-    Returns:
-        (success, output) tuple
-    """
-    full_prompt = f"{prompt}\n\n{disassembly}"
-
-    try:
-        result = subprocess.run(
-            [
-                "claude",
-                "-p", full_prompt,
-                "--model", "opus",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-
-        if result.returncode == 0:
-            return True, result.stdout
-        else:
-            error_msg = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
-            return False, f"Claude CLI error: {error_msg}"
-
-    except subprocess.TimeoutExpired:
-        return False, "Error: Claude CLI timed out after 60 seconds"
-    except FileNotFoundError:
-        return False, "Error: 'claude' CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
-    except Exception as e:
-        return False, f"Error calling Claude: {e}"
-
-
-def format_output(text: str) -> str:
-    """Format output with >> prefix on each line."""
-    lines = text.rstrip().split('\n')
-    return '\n'.join(f">> {line}" for line in lines)
+Annotated disassembly:"""
 
 
 def parse_args(command: str) -> tuple[bool, bool, str]:
@@ -158,22 +84,22 @@ def parse_args(command: str) -> tuple[bool, bool, str]:
 
     i = 0
     while i < len(parts):
-        if parts[i] in ('-a', '--annotate'):
+        if parts[i] in ("-a", "--annotate"):
             annotate = True
-        elif parts[i] == '--claude':
+        elif parts[i] == "--claude":
             use_claude = True
         else:
             address_parts.append(parts[i])
         i += 1
 
-    return annotate, use_claude, ' '.join(address_parts)
+    return annotate, use_claude, " ".join(address_parts)
 
 
 def explain_command(
     debugger: lldb.SBDebugger,
     command: str,
     result: lldb.SBCommandReturnObject,
-    internal_dict: Dict[str, Any]
+    internal_dict: Dict[str, Any],
 ) -> None:
     """
     LLDB command to explain disassembly using an LLM.
@@ -203,8 +129,16 @@ def explain_command(
         result.SetError("No disassembly output")
         return
 
+    # Build context (symbol info + register state)
+    context = build_context(debugger, address)
+
     # Select prompt based on mode
-    prompt = CLAUDE_ANNOTATE_PROMPT if annotate else CLAUDE_PROMPT
+    prompt_template = ANNOTATE_PROMPT if annotate else EXPLAIN_PROMPT
+    prompt = prompt_template.format(
+        context=context if context else "(no additional context available)",
+        disassembly=disasm.strip(),
+    )
+
     mode_desc = "annotating" if annotate else "explaining"
     backend = "Claude" if use_claude else "llm"
 
@@ -212,9 +146,9 @@ def explain_command(
     print(f"Sending {len(disasm.splitlines())} lines of disassembly to {backend} ({mode_desc})...")
     start_time = time.time()
     if use_claude:
-        success, explanation = call_claude(disasm, prompt)
+        success, explanation = call_claude(prompt)
     else:
-        success, explanation = call_llm(disasm, prompt)
+        success, explanation = call_llm(prompt)
     elapsed = time.time() - start_time
 
     if not success:
@@ -230,7 +164,5 @@ def explain_command(
 def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any]) -> None:
     """Initialize the oexplain command when this module is loaded in LLDB."""
     module_path = f"{__name__}.explain_command"
-    debugger.HandleCommand(
-        f'command script add -f {module_path} oexplain'
-    )
+    debugger.HandleCommand(f"command script add -f {module_path} oexplain")
     print(f"[lldb-objc v{__version__}] 'oexplain' installed - Explain disassembly with LLM")

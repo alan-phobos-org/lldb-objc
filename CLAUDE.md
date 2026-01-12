@@ -2,6 +2,56 @@
 
 LLDB commands for Objective-C runtime introspection, including private classes/methods.
 
+## Development Workflow
+
+Before committing, always run:
+```bash
+./build.sh check
+```
+
+This runs:
+1. Linter (ruff or flake8)
+2. Unit tests (pytest)
+3. Quick integration tests
+
+## Release Process
+
+To create a release:
+
+```bash
+# Step 1: Run all automated checks and tests
+./build.sh prepare-release
+
+# Step 2: Update CHANGELOG.md with release notes (requires human/LLM)
+# Add a new section: ## [X.Y.Z] - YYYY-MM-DD
+
+# Step 3: Review docs (CLAUDE.md, README.md) for completed work
+# Remove or mark done any TODO items, planned features now implemented, etc.
+
+# Step 4: Create the release commit and tag
+./build.sh release X.Y.Z
+
+# Step 5: Push to remote
+git push origin main vX.Y.Z
+```
+
+## Build Commands
+
+```bash
+./build.sh version          # Show current version (from git)
+./build.sh test             # Unit tests only (pytest)
+./build.sh test-int         # Full integration tests
+./build.sh test-quick       # Quick integration tests
+./build.sh test-all         # Unit + integration tests
+./build.sh lint             # Format and lint
+./build.sh check            # Full pre-commit check
+./build.sh dist             # Create release zip package
+./build.sh deploy-local     # Build dist and install locally
+./build.sh prepare-release  # Run all release checks and show changes
+./build.sh release X.Y.Z    # Create release commit and tag
+./build.sh clean            # Remove build artifacts
+```
+
 ## Commands
 
 | Command | Purpose | Key Flags |
@@ -15,6 +65,7 @@ LLDB commands for Objective-C runtime introspection, including private classes/m
 | `opool` | Find instances in pools | `--verbose` |
 | `oinstance` | Inspect object | `oinstance <addr\|$var\|expr>` |
 | `oexplain` | Explain disassembly via LLM | `--annotate`, `--claude` (uses llm by default) |
+| `odecompile` | Decompile via LLM | `--claude` (uses llm by default) |
 | `oreload` | Reload all commands | No flags (for development) |
 
 ### Quick Examples
@@ -36,16 +87,21 @@ oexplain $pc                        # Explain current function (uses llm)
 oexplain 0x12345678                 # Explain function at address
 oexplain -a $pc                     # Annotate disassembly line-by-line
 oexplain --claude $pc               # Use Claude CLI instead of llm
+odecompile $pc                      # Decompile current function (uses llm)
+odecompile 0x12345678               # Decompile function at address
+odecompile --claude $pc             # Use Claude CLI instead of llm
 ```
 
 ## Installation
 ```bash
-./install.py              # Install to ~/.lldbinit
-./install.py --uninstall  # Remove
-./install.py --status     # Check installation
+./install.py              # Install to ~/.lldb-objc and update ~/.lldbinit
+./install.py --uninstall  # Remove ~/.lldb-objc and clean ~/.lldbinit
+./install.py --status     # Check installation status
 ```
 
-Commands are loaded via directory import (`command script import /path/to/scripts`). Use `oreload` within LLDB to reload commands after making changes, useful for development.
+Scripts are copied to `~/.lldb-objc/scripts/` for a stable installation path. The installer updates `~/.lldbinit` to load from this permanent location.
+
+For development, use `oreload` within LLDB to reload commands after making changes to the source.
 
 ## Project Structure
 ```
@@ -60,11 +116,14 @@ scripts/            # Command modules (directory import)
   objc_pool.py        # opool
   objc_instance.py    # oinstance
   objc_explain.py     # oexplain
+  objc_decompile.py   # odecompile
+  objc_llm.py         # Shared LLM utilities (symbol lookup, registers, CLI wrappers)
   objc_utils.py       # LLDB-dependent utilities
   objc_core.py        # Pure Python utilities (unit testable)
-  version.py          # version info
+  version.py          # Git-based version info
+build.sh            # Build, test, and release script
 install.py          # Installer
-package.py          # Release packager
+CHANGELOG.md        # Release notes
 tests/              # Test suite
   unit/             # Pure Python unit tests (pytest)
   integration/      # LLDB integration tests (current tests)
@@ -81,11 +140,11 @@ tests/              # Test suite
 ### Adding Commands
 1. Create `scripts/objc_<name>.py` with `__lldb_init_module()` printing one-line load message
 2. Add module name to `COMMAND_MODULES` list in `scripts/__init__.py`
-3. Add filename to `SCRIPT_FILES` list in `package.py`
-4. Add integration tests in `tests/test_<name>.py`
-5. Extract pure functions to `objc_core.py` and add unit tests in `tests/unit/`
-6. Update README.md and CLAUDE.md command tables
-7. Test with `oreload` in LLDB session to verify reload works
+3. Add integration tests in `tests/test_<name>.py`
+4. Extract pure functions to `objc_core.py` and add unit tests in `tests/unit/`
+5. Update README.md and CLAUDE.md command tables
+6. Test with `oreload` in LLDB session to verify reload works
+7. Run `./build.sh check` before committing
 
 ### Code Organization for Testability
 - **objc_core.py**: Pure Python logic (parsing, formatting, pattern matching) - fully unit testable
@@ -110,6 +169,12 @@ Primary info in normal text; secondary (types, hierarchy) in dim gray: `\033[90m
 
 ### Testing & Verification Protocol
 
+#### Setup
+```bash
+# Use Python 3.11 (Homebrew Python 3.14 is externally-managed)
+/Library/Frameworks/Python.framework/Versions/3.11/bin/python3 -m pip install -r requirements-dev.txt
+```
+
 #### Test Layers
 1. **Unit Tests** (pytest) - Pure Python logic, no LLDB required
    ```bash
@@ -122,10 +187,10 @@ Primary info in normal text; secondary (types, hierarchy) in dim gray: `\033[90m
    - Test parsing, formatting, pattern matching
    - Cross-platform (can run on Linux)
 
-2. **Integration Tests** - Full LLDB commands with runtime
+2. **Integration Tests** - Full LLDB commands with runtime (use Python 3.11)
    ```bash
-   ./tests/run_all_tests.py          # All integration tests
-   ./tests/run_all_tests.py --quick  # Quick subset
+   /Library/Frameworks/Python.framework/Versions/3.11/bin/python3 ./tests/run_all_tests.py          # All
+   /Library/Frameworks/Python.framework/Versions/3.11/bin/python3 ./tests/run_all_tests.py --quick  # Quick subset
    ```
    - Slower (~2-3 min for full suite)
    - macOS-only (requires LLDB + Objective-C runtime)
@@ -161,14 +226,19 @@ See [Testing & Verification Protocol](#testing--verification-protocol) above for
 
 **Quick Reference:**
 ```bash
-# Unit tests (fast, no LLDB)
+pip install -r requirements-dev.txt  # Install test dependencies
+
+# Using build.sh (recommended)
+./build.sh test        # Unit tests only
+./build.sh test-quick  # Quick integration tests
+./build.sh test-int    # Full integration tests
+./build.sh test-all    # Unit + integration tests
+./build.sh check       # Full pre-commit check
+
+# Direct pytest (unit tests)
 pytest                           # All unit tests
 pytest -v                        # Verbose
 pytest tests/unit/test_objc_utils.py::TestParseMethodSignature  # Specific tests
-
-# Integration tests (LLDB required)
-./tests/run_all_tests.py          # All integration tests
-./tests/run_all_tests.py --quick  # Quick subset (obrk, hierarchy, ivars_props)
 ```
 
 ## Resolution Chain (obrk)

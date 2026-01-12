@@ -18,7 +18,6 @@ import importlib
 import lldb
 import os
 import sys
-from pathlib import Path
 from typing import Dict, Any
 
 # Add the script directory to path for imports
@@ -42,6 +41,7 @@ COMMAND_MODULES = [
     ".objc_pool",
     ".objc_instance",
     ".objc_explain",
+    ".objc_decompile",
 ]
 
 # Track loaded modules for reloading
@@ -61,7 +61,7 @@ def _load_command_module(module_name: str, debugger: lldb.SBDebugger) -> bool:
             _loaded_modules[module_name] = module
 
         # Call the module's initialization function if it exists
-        if hasattr(module, '__lldb_init_module'):
+        if hasattr(module, "__lldb_init_module"):
             module.__lldb_init_module(debugger, {})
 
         return True
@@ -74,7 +74,7 @@ def reload_commands(
     debugger: lldb.SBDebugger,
     command: str,
     result: lldb.SBCommandReturnObject,
-    internal_dict: Dict[str, Any]
+    internal_dict: Dict[str, Any],
 ) -> None:
     """
     Reload all LLDB Objective-C command modules.
@@ -85,22 +85,24 @@ def reload_commands(
 
     # Reload utils first (other modules depend on it)
     try:
-        if 'scripts.objc_utils' in sys.modules:
-            importlib.reload(sys.modules['scripts.objc_utils'])
-        elif 'objc_utils' in sys.modules:
-            importlib.reload(sys.modules['objc_utils'])
+        if "scripts.objc_utils" in sys.modules:
+            importlib.reload(sys.modules["scripts.objc_utils"])
+        elif "objc_utils" in sys.modules:
+            importlib.reload(sys.modules["objc_utils"])
     except Exception as e:
         print(f"Error reloading objc_utils: {e}", file=sys.stderr)
 
     # Reload version
     try:
-        if 'scripts.version' in sys.modules:
-            importlib.reload(sys.modules['scripts.version'])
+        if "scripts.version" in sys.modules:
+            importlib.reload(sys.modules["scripts.version"])
             from .version import __version__ as new_version
+
             print(f"Version: {new_version}")
-        elif 'version' in sys.modules:
-            importlib.reload(sys.modules['version'])
+        elif "version" in sys.modules:
+            importlib.reload(sys.modules["version"])
             from version import __version__ as new_version
+
             print(f"Version: {new_version}")
     except Exception as e:
         print(f"Error reloading version: {e}", file=sys.stderr)
@@ -135,8 +137,7 @@ def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any])
     # Use the full module path for the reload function
     module_path = f"{__name__}.reload_commands"
     debugger.HandleCommand(
-        f'command script add -f {module_path} oreload '
-        f'-h "Reload all LLDB Objective-C command modules"'
+        f'command script add -f {module_path} oreload -h "Reload all LLDB Objective-C command modules"'
     )
 
     print("LLDB Objective-C Tools loaded. Use 'oreload' to reload commands.")

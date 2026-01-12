@@ -3,21 +3,21 @@
 Unit tests for objc_explain pure Python functions.
 """
 
-import pytest
 import sys
 import os
 
 # Add scripts directory to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'scripts'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "scripts"))
 
 # Import the module directly to access pure functions
 # We can't import the whole module because it imports lldb, so we define the function here
 # This tests the logic even if we can't import the module directly
 
+
 def format_output(text: str) -> str:
     """Format output with >> prefix on each line."""
-    lines = text.rstrip().split('\n')
-    return '\n'.join(f">> {line}" for line in lines)
+    lines = text.rstrip().split("\n")
+    return "\n".join(f">> {line}" for line in lines)
 
 
 class TestFormatOutput:
@@ -78,15 +78,15 @@ def parse_args(command: str) -> tuple:
 
     i = 0
     while i < len(parts):
-        if parts[i] in ('-a', '--annotate'):
+        if parts[i] in ("-a", "--annotate"):
             annotate = True
-        elif parts[i] == '--claude':
+        elif parts[i] == "--claude":
             use_claude = True
         else:
             address_parts.append(parts[i])
         i += 1
 
-    return annotate, use_claude, ' '.join(address_parts)
+    return annotate, use_claude, " ".join(address_parts)
 
 
 class TestParseArgs:
@@ -183,7 +183,12 @@ class TestClaudePrompt:
     def test_prompt_contains_key_instructions(self):
         """Verify prompt contains essential instructions."""
         # Import the constant if possible, otherwise define expected content
-        prompt = """Here is some arm64 disassembly. Explain very concisely what this function does as you would to a security researcher. Avoid any boilerplate blurb. Include a compact view of the first 5 functions it will call."""
+        prompt = (
+            "Here is some arm64 disassembly. Explain very concisely what this "
+            "function does as you would to a security researcher. Avoid any "
+            "boilerplate blurb. Include a compact view of the first 5 functions "
+            "it will call."
+        )
 
         assert "arm64" in prompt
         assert "security researcher" in prompt
@@ -196,7 +201,14 @@ class TestClaudeAnnotatePrompt:
 
     def test_annotate_prompt_contains_key_instructions(self):
         """Verify annotate prompt contains essential instructions."""
-        prompt = """Here is some arm64 disassembly. Reproduce the disassembly exactly, but add concise high-level annotations as comments on lines where the purpose isn't obvious. Focus on what's happening semantically (e.g., "// get string length", "// check for nil", "// call objc_msgSend with selector"). Skip trivial operations like stack frame setup. Keep annotations brief."""
+        prompt = (
+            "Here is some arm64 disassembly. Reproduce the disassembly exactly, "
+            "but add concise high-level annotations as comments on lines where "
+            "the purpose isn't obvious. Focus on what's happening semantically "
+            '(e.g., "// get string length", "// check for nil", '
+            '"// call objc_msgSend with selector"). Skip trivial operations '
+            "like stack frame setup. Keep annotations brief."
+        )
 
         assert "arm64" in prompt
         assert "annotations" in prompt

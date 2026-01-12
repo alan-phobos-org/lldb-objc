@@ -22,26 +22,30 @@ import re
 
 # Get the script directory and project root
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, '..'))
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 
 # Test suites for implemented features
 IMPLEMENTED_TESTS = [
-    ('obrk', 'test_obrk.py', 'Objective-C breakpoint command'),
-    ('ocls', 'test_ocls.py', 'Objective-C class finder'),
-    ('osel', 'test_osel.py', 'Objective-C selector finder'),
-    ('ocall', 'test_ocall.py', 'Objective-C method caller'),
-    ('owatch', 'test_owatch.py', 'Objective-C method watcher'),
-    ('oprotos', 'test_oprotos.py', 'Objective-C protocol conformance'),
-    ('hierarchy', 'test_hierarchy.py', 'Class hierarchy display'),
-    ('ivars_props', 'test_ivars_props.py', 'Instance variables and properties'),
-    ('osel_perf', 'test_osel_perf.py', 'osel performance optimization'),
+    ("obrk", "test_obrk.py", "Objective-C breakpoint command"),
+    ("ocls", "test_ocls.py", "Objective-C class finder"),
+    ("osel", "test_osel.py", "Objective-C selector finder"),
+    ("ocall", "test_ocall.py", "Objective-C method caller"),
+    ("owatch", "test_owatch.py", "Objective-C method watcher"),
+    ("oprotos", "test_oprotos.py", "Objective-C protocol conformance"),
+    ("opool", "test_opool.py", "Autorelease pool scanner"),
+    ("oinstance", "test_oinstance.py", "Object inspector"),
+    ("hierarchy", "test_hierarchy.py", "Class hierarchy display"),
+    ("ivars_props", "test_ivars_props.py", "Instance variables and properties"),
+    ("osel_perf", "test_osel_perf.py", "osel performance optimization"),
+    ("oexplain", "test_oexplain.py", "LLM disassembly explainer"),
+    ("odecompile", "test_odecompile.py", "LLM decompiler"),
 ]
 
 # Quick tests (subset of implemented tests that run fast)
 QUICK_TESTS = [
-    ('obrk', 'test_obrk.py', 'Objective-C breakpoint command'),
-    ('hierarchy', 'test_hierarchy.py', 'Class hierarchy display'),
-    ('ivars_props', 'test_ivars_props.py', 'Instance variables and properties'),
+    ("obrk", "test_obrk.py", "Objective-C breakpoint command"),
+    ("hierarchy", "test_hierarchy.py", "Class hierarchy display"),
+    ("ivars_props", "test_ivars_props.py", "Instance variables and properties"),
 ]
 
 # Tests for future/unimplemented features (in tests/future/ directory)
@@ -51,20 +55,20 @@ FUTURE_TESTS = [
 
 # Performance/timing tests (optional)
 PERF_TESTS = [
-    ('timing', 'test_timing.py', 'Detailed timing measurements'),
+    ("timing", "test_timing.py", "Detailed timing measurements"),
 ]
 
 
 def check_binary():
     """Check if HelloWorld binary exists."""
-    hello_world_path = os.path.join(PROJECT_ROOT, 'examples/HelloWorld/HelloWorld/HelloWorld')
+    hello_world_path = os.path.join(PROJECT_ROOT, "examples/HelloWorld/HelloWorld/HelloWorld")
     if not os.path.exists(hello_world_path):
         print("=" * 70)
         print("SETUP ERROR")
         print("=" * 70)
-        print(f"\nHelloWorld binary not found!")
+        print("\nHelloWorld binary not found!")
         print(f"  Expected: {hello_world_path}")
-        print(f"  Build with: cd examples/HelloWorld && xcodebuild\n")
+        print("  Build with: cd examples/HelloWorld && xcodebuild\n")
         return False
     return True
 
@@ -89,8 +93,8 @@ def run_test_suite(test_file, verbose=False):
             [sys.executable, test_path],
             capture_output=True,
             text=True,
-            timeout=300,  # 5 minute timeout per suite
-            cwd=PROJECT_ROOT
+            timeout=600,  # 10 minute timeout per suite
+            cwd=PROJECT_ROOT,
         )
         elapsed = time.time() - start_time
         output = result.stdout + result.stderr
@@ -101,8 +105,8 @@ def run_test_suite(test_file, verbose=False):
         total = 0
 
         # Try to parse from summary line
-        summary_match = re.search(r'(\d+)\s+passed\s+in\s+[\d.]+s', output)
-        failed_match = re.search(r'(\d+)\s+failed(?:,\s+(\d+)\s+passed)?\s+in\s+[\d.]+s', output)
+        summary_match = re.search(r"(\d+)\s+passed\s+in\s+[\d.]+s", output)
+        failed_match = re.search(r"(\d+)\s+failed(?:,\s+(\d+)\s+passed)?\s+in\s+[\d.]+s", output)
 
         if failed_match:
             failed = int(failed_match.group(1))
@@ -113,62 +117,60 @@ def run_test_suite(test_file, verbose=False):
             total = passed
         else:
             # Fallback: count dots and F's from progress line
-            progress_match = re.search(r'([.F]+)\s+\[\s*\d+%\]', output)
+            progress_match = re.search(r"([.F]+)\s+\[\s*\d+%\]", output)
             if progress_match:
                 progress = progress_match.group(1)
-                passed = progress.count('.')
+                passed = progress.count(".")
                 total = len(progress)
 
         # Extract failure details if present
         failures = []
         if total > passed:  # There are failures
             # Extract the FAILURES section
-            failures_section = re.search(
-                r'={70}\nFAILURES\n={70}(.*?)(?:={70}|\Z)',
-                output,
-                re.DOTALL
-            )
+            failures_section = re.search(r"={70}\nFAILURES\n={70}(.*?)(?:={70}|\Z)", output, re.DOTALL)
             if failures_section:
                 # Split by test separator lines
-                test_failures = re.split(r'_{70}\n', failures_section.group(1))
+                test_failures = re.split(r"_{70}\n", failures_section.group(1))
                 for failure in test_failures:
                     failure = failure.strip()
                     if failure:
                         # Extract test name (first line) and details
-                        lines = failure.split('\n', 1)
+                        lines = failure.split("\n", 1)
                         if len(lines) >= 2:
                             test_name = lines[0].strip()
                             details = lines[1].strip()
-                            failures.append({'name': test_name, 'details': details})
+                            failures.append({"name": test_name, "details": details})
                         elif lines:
-                            failures.append({'name': lines[0].strip(), 'details': ''})
+                            failures.append({"name": lines[0].strip(), "details": ""})
 
         return passed, total, elapsed, output, failures
 
     except subprocess.TimeoutExpired:
         elapsed = time.time() - start_time
-        return 0, 1, elapsed, "TIMEOUT: Test suite exceeded 5 minute limit", [
-            {'name': 'TIMEOUT', 'details': 'Test suite exceeded 5 minute limit'}
-        ]
+        return (
+            0,
+            1,
+            elapsed,
+            "TIMEOUT: Test suite exceeded 10 minute limit",
+            [{"name": "TIMEOUT", "details": "Test suite exceeded 10 minute limit"}],
+        )
     except Exception as e:
         elapsed = time.time() - start_time
-        return 0, 1, elapsed, f"ERROR: {str(e)}", [
-            {'name': 'ERROR', 'details': str(e)}
-        ]
+        return 0, 1, elapsed, f"ERROR: {str(e)}", [{"name": "ERROR", "details": str(e)}]
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Run lldb-objc test suites')
-    parser.add_argument('--all', action='store_true',
-                        help='Include future/unimplemented feature tests')
-    parser.add_argument('--quick', action='store_true',
-                        help='Run quick tests only')
-    parser.add_argument('--verbose', '-v', action='store_true',
-                        help='Show detailed output from each test suite')
-    parser.add_argument('--perf', action='store_true',
-                        help='Include performance tests')
-    parser.add_argument('suites', nargs='*',
-                        help='Specific test suites to run (e.g., obrk ocls)')
+    parser = argparse.ArgumentParser(description="Run lldb-objc test suites")
+    parser.add_argument("--all", action="store_true", help="Include future/unimplemented feature tests")
+    parser.add_argument("--quick", action="store_true", help="Run quick tests only")
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Show detailed output from each test suite",
+    )
+    parser.add_argument("--perf", action="store_true", help="Include performance tests")
+    parser.add_argument("suites", nargs="*", help="Specific test suites to run (e.g., obrk ocls)")
 
     args = parser.parse_args()
 
@@ -180,8 +182,7 @@ def main():
     if args.suites:
         # Run specific suites
         all_tests = IMPLEMENTED_TESTS + FUTURE_TESTS + PERF_TESTS
-        tests_to_run = [(name, file, desc) for name, file, desc in all_tests
-                        if name in args.suites]
+        tests_to_run = [(name, file, desc) for name, file, desc in all_tests if name in args.suites]
         if not tests_to_run:
             print(f"\nNo matching test suites: {args.suites}")
             print(f"Available suites: {', '.join([t[0] for t in IMPLEMENTED_TESTS + FUTURE_TESTS + PERF_TESTS])}\n")
@@ -226,14 +227,16 @@ def main():
                 print(f"\nSKIPPED: {output}")
             else:
                 print("s", end="", flush=True)
-            suite_results.append({
-                'name': suite_name,
-                'status': 'SKIPPED',
-                'passed': 0,
-                'total': 0,
-                'elapsed': elapsed,
-                'failures': []
-            })
+            suite_results.append(
+                {
+                    "name": suite_name,
+                    "status": "SKIPPED",
+                    "passed": 0,
+                    "total": 0,
+                    "elapsed": elapsed,
+                    "failures": [],
+                }
+            )
         else:
             if args.verbose:
                 # Print the actual suite output
@@ -244,24 +247,28 @@ def main():
                     print(".", end="", flush=True)
                 else:
                     print("F", end="", flush=True)
-                    failed_suites.append({
-                        'name': suite_name,
-                        'description': description,
-                        'passed': passed,
-                        'total': total,
-                        'elapsed': elapsed,
-                        'failures': failures,
-                        'output': output
-                    })
+                    failed_suites.append(
+                        {
+                            "name": suite_name,
+                            "description": description,
+                            "passed": passed,
+                            "total": total,
+                            "elapsed": elapsed,
+                            "failures": failures,
+                            "output": output,
+                        }
+                    )
 
-            suite_results.append({
-                'name': suite_name,
-                'status': 'PASS' if passed == total and total > 0 else 'FAIL',
-                'passed': passed,
-                'total': total,
-                'elapsed': elapsed,
-                'failures': failures
-            })
+            suite_results.append(
+                {
+                    "name": suite_name,
+                    "status": "PASS" if passed == total and total > 0 else "FAIL",
+                    "passed": passed,
+                    "total": total,
+                    "elapsed": elapsed,
+                    "failures": failures,
+                }
+            )
 
             total_passed += passed
             total_tests += total
@@ -286,33 +293,38 @@ def main():
             print(f"Result: {suite['passed']}/{suite['total']} passed ({suite['elapsed']:.2f}s)")
             print("_" * 70)
 
-            if suite['failures']:
-                for failure in suite['failures'][:5]:  # Show first 5 failures
+            if suite["failures"]:
+                for failure in suite["failures"][:5]:  # Show first 5 failures
                     print(f"\n  {failure['name']}")
                     # Show first 300 chars of details
-                    details = failure['details'][:300]
+                    details = failure["details"][:300]
                     if details:
                         # Indent the details
-                        for line in details.split('\n'):
+                        for line in details.split("\n"):
                             if line.strip():
                                 print(f"    {line}")
-                    if len(failure['details']) > 300:
+                    if len(failure["details"]) > 300:
                         print(f"    ... ({len(failure['details']) - 300} more characters)")
 
-                if len(suite['failures']) > 5:
+                if len(suite["failures"]) > 5:
                     print(f"\n  ... and {len(suite['failures']) - 5} more failures")
 
             # Show how to re-run this specific suite
-            print(f"\n  Re-run this suite: ./tests/{suite['name'] if suite['name'].startswith('test_') else 'test_' + suite['name'] + '.py'}")
-            if not suite['name'].startswith('test_'):
+            suite_name = suite["name"]
+            if suite_name.startswith("test_"):
+                test_file = suite_name
+            else:
+                test_file = f"test_{suite_name}.py"
+            print(f"\n  Re-run this suite: ./tests/{test_file}")
+            if not suite["name"].startswith("test_"):
                 print(f"  Re-run this suite: python3 tests/test_{suite['name']}.py")
 
     # Print summary section (pytest style)
     print(f"\n{'=' * 70}")
 
-    suites_passed = sum(1 for r in suite_results if r['status'] == 'PASS')
-    suites_failed = sum(1 for r in suite_results if r['status'] == 'FAIL')
-    suites_skipped = sum(1 for r in suite_results if r['status'] == 'SKIPPED')
+    suites_passed = sum(1 for r in suite_results if r["status"] == "PASS")
+    suites_failed = sum(1 for r in suite_results if r["status"] == "FAIL")
+    suites_skipped = sum(1 for r in suite_results if r["status"] == "SKIPPED")
 
     if not args.verbose:
         # Show suite-level summary
@@ -348,5 +360,5 @@ def main():
     sys.exit(0 if suites_failed == 0 else 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

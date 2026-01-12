@@ -1,0 +1,11 @@
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+# E402: Module level import not at top of file
+# These scripts have imports after try/except version blocks which is intentional
+"scripts/objc_*.py" = ["E402"]
+"scripts/__init__.py" = ["E402"]

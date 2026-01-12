@@ -21,8 +21,8 @@ import functools
 
 # Paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, '..'))
-HELLO_WORLD_PATH = os.path.join(PROJECT_ROOT, 'examples/HelloWorld/HelloWorld/HelloWorld')
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+HELLO_WORLD_PATH = os.path.join(PROJECT_ROOT, "examples/HelloWorld/HelloWorld/HelloWorld")
 
 # Test timeout in seconds (1 minute max per test case)
 TEST_TIMEOUT_SECONDS = 60
@@ -30,6 +30,7 @@ TEST_TIMEOUT_SECONDS = 60
 
 class TestTimeoutError(Exception):
     """Raised when a test exceeds the timeout limit."""
+
     pass
 
 
@@ -48,6 +49,7 @@ def with_timeout(timeout_seconds=TEST_TIMEOUT_SECONDS):
     Returns:
         Decorated function that will fail if it exceeds the timeout.
     """
+
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -65,7 +67,9 @@ def with_timeout(timeout_seconds=TEST_TIMEOUT_SECONDS):
                 # Restore the old handler and cancel the alarm
                 signal.alarm(0)
                 signal.signal(signal.SIGALRM, old_handler)
+
         return wrapper
+
     return decorator
 
 
@@ -93,12 +97,12 @@ def run_lldb_test(commands, scripts=None, timeout=30, load_ids_framework=True):
         Tuple of (stdout, stderr, return_code)
     """
     # Build command list using -o flags for reliable execution
-    cmd_args = ['lldb', '-b']
+    cmd_args = ["lldb", "-b"]
 
     # Add script imports (only if not already loaded by lldbinit)
     if scripts:
         # First, allow overwrites to handle lldbinit already loading these
-        cmd_args.extend(['-o', 'settings set interpreter.require-overwrite false'])
+        cmd_args.extend(["-o", "settings set interpreter.require-overwrite false"])
         for script in scripts:
             script_path = os.path.join(PROJECT_ROOT, script)
 
@@ -111,31 +115,31 @@ def run_lldb_test(commands, scripts=None, timeout=30, load_ids_framework=True):
                     f"  Hint: Scripts may have moved to 'scripts/' subdirectory"
                 )
 
-            cmd_args.extend(['-o', f'command script import {script_path}'])
+            cmd_args.extend(["-o", f"command script import {script_path}"])
 
     # Setup commands
-    cmd_args.extend(['-o', f'file {HELLO_WORLD_PATH}'])
-    cmd_args.extend(['-o', 'breakpoint set -n "HelloWorld`main"'])
-    cmd_args.extend(['-o', 'run'])
-    cmd_args.extend(['-o', 'breakpoint delete 1'])  # Clear the main breakpoint after hit
+    cmd_args.extend(["-o", f"file {HELLO_WORLD_PATH}"])
+    cmd_args.extend(["-o", 'breakpoint set -n "HelloWorld`main"'])
+    cmd_args.extend(["-o", "run"])
+    cmd_args.extend(["-o", "breakpoint delete 1"])  # Clear the main breakpoint after hit
 
     if load_ids_framework:
-        cmd_args.extend(['-o', 'expr (void)dlopen("/System/Library/PrivateFrameworks/IDS.framework/IDS", 0x2)'])
+        cmd_args.extend(
+            [
+                "-o",
+                'expr (void)dlopen("/System/Library/PrivateFrameworks/IDS.framework/IDS", 0x2)',
+            ]
+        )
 
     # Add user commands
     for cmd in commands:
-        cmd_args.extend(['-o', cmd])
+        cmd_args.extend(["-o", cmd])
 
-    cmd_args.extend(['-o', 'quit'])
+    cmd_args.extend(["-o", "quit"])
 
     # Run LLDB
     try:
-        result = subprocess.run(
-            cmd_args,
-            capture_output=True,
-            text=True,
-            timeout=timeout
-        )
+        result = subprocess.run(cmd_args, capture_output=True, text=True, timeout=timeout)
         return result.stdout, result.stderr, result.returncode
     except subprocess.TimeoutExpired:
         return "", "TIMEOUT", -1
@@ -180,28 +184,28 @@ def parse_timing_metrics(output):
     metrics = {}
 
     # Parse method counts
-    instance_match = re.search(r'Instance methods \((\d+)\)', output)
-    class_match = re.search(r'Class methods \((\d+)\)', output)
-    total_match = re.search(r'Total: (\d+) method', output)
+    instance_match = re.search(r"Instance methods \((\d+)\)", output)
+    class_match = re.search(r"Class methods \((\d+)\)", output)
+    total_match = re.search(r"Total: (\d+) method", output)
 
     if instance_match:
-        metrics['instance_methods'] = int(instance_match.group(1))
+        metrics["instance_methods"] = int(instance_match.group(1))
     if class_match:
-        metrics['class_methods'] = int(class_match.group(1))
+        metrics["class_methods"] = int(class_match.group(1))
     if total_match:
-        metrics['total_methods'] = int(total_match.group(1))
+        metrics["total_methods"] = int(total_match.group(1))
 
     # Parse performance metrics
-    expr_match = re.search(r'(\d+)\s*expressions?', output, re.IGNORECASE)
-    mem_match = re.search(r'(\d+)\s*memory\s*reads?', output, re.IGNORECASE)
-    time_match = re.search(r'(\d+\.?\d*)\s*s\]', output)
+    expr_match = re.search(r"(\d+)\s*expressions?", output, re.IGNORECASE)
+    mem_match = re.search(r"(\d+)\s*memory\s*reads?", output, re.IGNORECASE)
+    time_match = re.search(r"(\d+\.?\d*)\s*s\]", output)
 
     if expr_match:
-        metrics['expressions'] = int(expr_match.group(1))
+        metrics["expressions"] = int(expr_match.group(1))
     if mem_match:
-        metrics['memory_reads'] = int(mem_match.group(1))
+        metrics["memory_reads"] = int(mem_match.group(1))
     if time_match:
-        metrics['time_seconds'] = float(time_match.group(1))
+        metrics["time_seconds"] = float(time_match.group(1))
 
     return metrics
 
@@ -276,6 +280,7 @@ def run_test_suite(name, tests, show_category_summary=None):
 # Shared LLDB Session Support
 # =============================================================================
 
+
 class SharedLLDBSession:
     """
     A shared LLDB session that persists across multiple test commands.
@@ -294,14 +299,16 @@ class SharedLLDBSession:
 
     # Map script filenames to their command names for validation
     SCRIPT_TO_COMMAND = {
-        'objc_breakpoint.py': 'obrk',
-        'objc_cls.py': 'ocls',
-        'objc_sel.py': 'osel',
-        'objc_call.py': 'ocall',
-        'objc_watch.py': 'owatch',
-        'objc_protos.py': 'oprotos',
-        'objc_pool.py': 'opool',
-        'objc_instance.py': 'oinstance',
+        "objc_breakpoint.py": "obrk",
+        "objc_cls.py": "ocls",
+        "objc_sel.py": "osel",
+        "objc_call.py": "ocall",
+        "objc_watch.py": "owatch",
+        "objc_protos.py": "oprotos",
+        "objc_pool.py": "opool",
+        "objc_instance.py": "oinstance",
+        "objc_explain.py": "oexplain",
+        "objc_decompile.py": "odecompile",
     }
 
     def __init__(self, scripts=None, load_ids_framework=True, timeout=30, validate_commands=True):
@@ -332,9 +339,10 @@ class SharedLLDBSession:
     def _strip_ansi(text):
         """Remove ANSI escape sequences from text."""
         import re
+
         # Pattern matches various ANSI escape sequences
-        ansi_pattern = re.compile(r'\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\x07|\r')
-        return ansi_pattern.sub('', text)
+        ansi_pattern = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\x07|\r")
+        return ansi_pattern.sub("", text)
 
     def start(self):
         """Start the LLDB session using pexpect."""
@@ -345,33 +353,28 @@ class SharedLLDBSession:
 
         # Environment with disabled LLDB progress reporting
         env = os.environ.copy()
-        env['TERM'] = 'dumb'  # Disable terminal features
+        env["TERM"] = "dumb"  # Disable terminal features
 
         # Start LLDB in non-interactive style
-        self.child = pexpect.spawn(
-            'lldb',
-            encoding='utf-8',
-            timeout=self.default_timeout,
-            env=env
-        )
+        self.child = pexpect.spawn("lldb", encoding="utf-8", timeout=self.default_timeout, env=env)
         self.child.setwinsize(200, 500)  # Set large window to avoid line wrapping
 
         # Wait for initial prompt
-        self.child.expect(r'\(lldb\)')
+        self.child.expect(r"\(lldb\)")
 
         # Disable terminal features that interfere with output parsing
-        self.child.sendline('settings set use-color false')
-        self.child.expect(r'\(lldb\)')
-        self.child.sendline('settings set show-progress false')
-        self.child.expect(r'\(lldb\)')
-        self.child.sendline('settings set auto-confirm true')
-        self.child.expect(r'\(lldb\)')
+        self.child.sendline("settings set use-color false")
+        self.child.expect(r"\(lldb\)")
+        self.child.sendline("settings set show-progress false")
+        self.child.expect(r"\(lldb\)")
+        self.child.sendline("settings set auto-confirm true")
+        self.child.expect(r"\(lldb\)")
 
         # Send initialization commands
         init_commands = []
 
         # Allow overwrites for scripts that may already be loaded
-        init_commands.append('settings set interpreter.require-overwrite false')
+        init_commands.append("settings set interpreter.require-overwrite false")
 
         # Import scripts
         for script in self.scripts:
@@ -386,12 +389,12 @@ class SharedLLDBSession:
                     f"  Hint: Scripts may have moved to 'scripts/' subdirectory"
                 )
 
-            init_commands.append(f'command script import {script_path}')
+            init_commands.append(f"command script import {script_path}")
 
         # Set up target and run
-        init_commands.append(f'file {HELLO_WORLD_PATH}')
-        init_commands.append('breakpoint set -n main')
-        init_commands.append('run')
+        init_commands.append(f"file {HELLO_WORLD_PATH}")
+        init_commands.append("breakpoint set -n main")
+        init_commands.append("run")
 
         # Load IDS framework if requested
         if self.load_ids_framework:
@@ -400,19 +403,16 @@ class SharedLLDBSession:
         # Execute each init command
         for cmd in init_commands:
             self.child.sendline(cmd)
-            self.child.expect(r'\(lldb\)', timeout=60)
+            self.child.expect(r"\(lldb\)", timeout=60)
 
             # Check if the command resulted in an error (especially for script imports)
             output = self.child.before
-            if 'error:' in output.lower() and 'command script import' in cmd:
-                raise RuntimeError(
-                    f"Script import failed: {cmd}\n"
-                    f"Error output: {output}"
-                )
+            if "error:" in output.lower() and "command script import" in cmd:
+                raise RuntimeError(f"Script import failed: {cmd}\nError output: {output}")
 
         # Clear the main breakpoint after it's been hit
-        self.child.sendline('breakpoint delete 1')
-        self.child.expect(r'\(lldb\)')
+        self.child.sendline("breakpoint delete 1")
+        self.child.expect(r"\(lldb\)")
 
         # Validate that commands loaded successfully (if requested)
         if self.validate_commands:
@@ -445,7 +445,7 @@ class SharedLLDBSession:
 
         # Wait for the prompt
         try:
-            self.child.expect(r'\(lldb\)', timeout=timeout)
+            self.child.expect(r"\(lldb\)", timeout=timeout)
         except pexpect.TIMEOUT:
             return f"TIMEOUT waiting for command: {cmd}"
 
@@ -456,20 +456,20 @@ class SharedLLDBSession:
         output = self._strip_ansi(output)
 
         # Check for Python tracebacks/errors that indicate command script failures
-        if 'Traceback (most recent call last):' in output:
+        if "Traceback (most recent call last):" in output:
             # Preserve the full traceback for debugging
             return f"ERROR: Command script failed with exception:\n{output}"
 
         # Check for LLDB import/module errors
-        if 'module importing failed' in output:
+        if "module importing failed" in output:
             return f"ERROR: Script import failed:\n{output}"
-        if 'was not found. Containing module might be missing' in output:
+        if "was not found. Containing module might be missing" in output:
             return f"ERROR: Command function not found (module import likely failed):\n{output}"
-        if 'error: ' in output.lower() and ('command script' in output.lower() or 'module' in output.lower()):
+        if "error: " in output.lower() and ("command script" in output.lower() or "module" in output.lower()):
             return f"ERROR: LLDB command error:\n{output}"
 
         # Clean up the output
-        lines = output.split('\n')
+        lines = output.split("\n")
         filtered_lines = []
         for line in lines:
             # Skip the echoed command
@@ -477,12 +477,12 @@ class SharedLLDBSession:
             if stripped == cmd:
                 continue
             # Skip lines that are just the command with (lldb) prefix
-            if stripped.endswith(cmd) and '(lldb)' in line:
+            if stripped.endswith(cmd) and "(lldb)" in line:
                 continue
             # Skip progress indicator lines (usually contain │ or similar)
-            if '│' in line or 'Locating external symbol' in line or 'Parsing symbol' in line:
+            if "│" in line or "Locating external symbol" in line or "Parsing symbol" in line:
                 continue
-            if 'Loading DWARF' in line:
+            if "Loading DWARF" in line:
                 continue
             # Skip empty lines at start
             if not filtered_lines and not stripped:
@@ -493,7 +493,7 @@ class SharedLLDBSession:
         while filtered_lines and not filtered_lines[-1].strip():
             filtered_lines.pop()
 
-        return '\n'.join(filtered_lines)
+        return "\n".join(filtered_lines)
 
     def run_commands(self, commands, timeout=None):
         """
@@ -511,11 +511,11 @@ class SharedLLDBSession:
             result = self.run_command(cmd, timeout)
             if result.strip():  # Only add non-empty results
                 output_parts.append(result)
-        return '\n'.join(output_parts)
+        return "\n".join(output_parts)
 
     def clear_breakpoints(self):
         """Clear all breakpoints to reset state between tests."""
-        return self.run_command('breakpoint delete -f')
+        return self.run_command("breakpoint delete -f")
 
     def validate_command_loaded(self, command_name):
         """
@@ -527,13 +527,10 @@ class SharedLLDBSession:
         Raises:
             RuntimeError: If command is not properly loaded
         """
-        output = self.run_command(f'help {command_name}')
+        output = self.run_command(f"help {command_name}")
 
-        if 'was not found' in output:
-            raise RuntimeError(
-                f"Command '{command_name}' not loaded properly.\n"
-                f"Help output: {output}"
-            )
+        if "was not found" in output:
+            raise RuntimeError(f"Command '{command_name}' not loaded properly.\nHelp output: {output}")
 
         return True
 
@@ -541,8 +538,9 @@ class SharedLLDBSession:
         """Stop the LLDB session."""
         if self.child:
             try:
-                self.child.sendline('quit')
+                self.child.sendline("quit")
                 import pexpect
+
                 self.child.expect(pexpect.EOF, timeout=5)
             except Exception:
                 pass
@@ -555,8 +553,8 @@ class SharedLLDBSession:
 # Pytest-Style Test Runner
 # =============================================================================
 
-def run_shared_test_suite(name, test_specs, scripts=None, show_category_summary=None,
-                          warmup_commands=None):
+
+def run_shared_test_suite(name, test_specs, scripts=None, show_category_summary=None, warmup_commands=None):
     """
     Run a list of tests using a shared LLDB session with pytest-style output.
 
@@ -584,16 +582,11 @@ def run_shared_test_suite(name, test_specs, scripts=None, show_category_summary=
 
     # Print header in pytest style
     print(f"{'=' * 70}")
-    print(f"test session starts")
+    print("test session starts")
     print(f"platform darwin -- Python {'.'.join(map(str, __import__('sys').version_info[:3]))}")
     print(f"collected {len(test_specs)} items\n")
 
-    # Start shared session
-    session_start = time.time()
-
     with SharedLLDBSession(scripts=scripts) as session:
-        session_init_time = time.time() - session_start
-
         # Run warmup commands if provided (e.g., cache pre-warming)
         if warmup_commands:
             for cmd in warmup_commands:
@@ -661,7 +654,7 @@ def run_shared_test_suite(name, test_specs, scripts=None, show_category_summary=
 
             # Show truncated output if available
             if result.failure_detail:
-                print(f"\n  Output (first 500 chars):")
+                print("\n  Output (first 500 chars):")
                 print(f"  {result.failure_detail[:500]}")
                 if len(result.failure_detail) > 500:
                     print(f"  ... ({len(result.failure_detail) - 500} more characters)")
@@ -692,100 +685,138 @@ def run_shared_test_suite(name, test_specs, scripts=None, show_category_summary=
 # Consolidated Validator Utilities
 # =============================================================================
 
+
 class Validators:
     """Consolidated validator factory to reduce duplication across test files."""
 
     @staticmethod
     def contains(substring, error_prefix="Expected content not found"):
         """Validator that checks if output contains a substring."""
+
         def validator(output):
             if substring in output:
                 return True, f"Contains '{substring}'"
-            return False, f"{error_prefix}\n  Expected: '{substring}' in output\n  Actual: Not found"
+            return (
+                False,
+                f"{error_prefix}\n  Expected: '{substring}' in output\n  Actual: Not found",
+            )
+
         return validator
 
     @staticmethod
     def contains_any(*substrings, error_prefix="Expected content not found"):
         """Validator that checks if output contains any of the given substrings."""
+
         def validator(output):
             for s in substrings:
                 if s in output:
                     return True, f"Contains '{s}'"
-            return False, f"{error_prefix}\n  Expected any of: {substrings}\n  Actual: None found"
+            return (
+                False,
+                f"{error_prefix}\n  Expected any of: {substrings}\n  Actual: None found",
+            )
+
         return validator
 
     @staticmethod
     def contains_all(*substrings, error_prefix="Expected content not found"):
         """Validator that checks if output contains all of the given substrings."""
+
         def validator(output):
             missing = [s for s in substrings if s not in output]
             if not missing:
                 return True, f"Contains all: {substrings}"
-            return False, f"{error_prefix}\n  Expected all of: {substrings}\n  Missing: {missing}"
+            return (
+                False,
+                f"{error_prefix}\n  Expected all of: {substrings}\n  Missing: {missing}",
+            )
+
         return validator
 
     @staticmethod
     def regex_match(pattern, error_prefix="Pattern not matched"):
         """Validator that checks if output matches a regex pattern."""
+
         def validator(output):
             match = re.search(pattern, output)
             if match:
                 return True, f"Matches pattern '{pattern}'"
             return False, f"{error_prefix}\n  Pattern: {pattern}\n  Actual: No match"
+
         return validator
 
     @staticmethod
     def count_minimum(pattern, min_count, error_prefix="Insufficient matches"):
         """Validator that checks if a pattern appears at least min_count times."""
+
         def validator(output):
             matches = re.findall(pattern, output)
             count = len(matches)
             if count >= min_count:
                 return True, f"Found {count} matches (>= {min_count})"
-            return False, f"{error_prefix}\n  Expected: >= {min_count}\n  Actual: {count}"
+            return (
+                False,
+                f"{error_prefix}\n  Expected: >= {min_count}\n  Actual: {count}",
+            )
+
         return validator
 
     @staticmethod
     def breakpoint_created(error_prefix="Breakpoint not created"):
         """Validator for breakpoint creation (checks for 'Breakpoint #' and 'IMP:')."""
+
         def validator(output):
-            if 'Breakpoint #' in output and 'IMP:' in output:
+            if "Breakpoint #" in output and "IMP:" in output:
                 return True, "Breakpoint created successfully"
-            return False, f"{error_prefix}\n  Expected: 'Breakpoint #' and 'IMP:' in output\n  Actual: Not found"
+            return (
+                False,
+                f"{error_prefix}\n  Expected: 'Breakpoint #' and 'IMP:' in output\n  Actual: Not found",
+            )
+
         return validator
 
     @staticmethod
     def error_reported(error_prefix="Error not reported"):
         """Validator that checks if an error message is present."""
+
         def validator(output):
-            if 'error' in output.lower() or 'not found' in output.lower() or 'usage' in output.lower():
+            if "error" in output.lower() or "not found" in output.lower() or "usage" in output.lower():
                 return True, "Error properly reported"
-            return False, f"{error_prefix}\n  Expected: Error message in output\n  Actual: No error found"
+            return (
+                False,
+                f"{error_prefix}\n  Expected: Error message in output\n  Actual: No error found",
+            )
+
         return validator
 
     @staticmethod
     def custom(check_func, pass_msg="Check passed", fail_msg="Check failed"):
         """Validator with custom check function."""
+
         def validator(output):
             if check_func(output):
                 return True, pass_msg
             return False, fail_msg
+
         return validator
 
     @staticmethod
     def combine_and(*validators):
         """Combine multiple validators with AND logic."""
+
         def validator(output):
             for v in validators:
                 passed, msg = v(output)
                 if not passed:
                     return False, msg
             return True, "All checks passed"
+
         return validator
 
     @staticmethod
     def combine_or(*validators):
         """Combine multiple validators with OR logic."""
+
         def validator(output):
             messages = []
             for v in validators:
@@ -793,5 +824,6 @@ class Validators:
                 if passed:
                     return True, msg
                 messages.append(msg)
-            return False, f"All checks failed:\n" + "\n".join(f"  - {m}" for m in messages)
+            return False, "All checks failed:\n" + "\n".join(f"  - {m}" for m in messages)
+
         return validator

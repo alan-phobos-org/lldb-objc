@@ -23,22 +23,16 @@ try:
 except ImportError:
     __version__ = "unknown"
 
-from objc_core import (
-    parse_method_signature,
-    format_method_name
-)
+from objc_core import parse_method_signature, format_method_name
 
-from objc_utils import (
-    resolve_method_address,
-    detect_method_type
-)
+from objc_utils import resolve_method_address, detect_method_type
 
 
 def breakpoint_on_objc_method(
     debugger: lldb.SBDebugger,
     command: str,
     result: lldb.SBCommandReturnObject,
-    internal_dict: Dict[str, Any]
+    internal_dict: Dict[str, Any],
 ) -> None:
     """
     Set a breakpoint on an Objective-C method by resolving it at runtime.
@@ -58,7 +52,9 @@ def breakpoint_on_objc_method(
     # Parse the method signature
     is_instance_method, class_name, selector, error = parse_method_signature(command)
     if error:
-        result.SetError(f"Usage: obrk -[ClassName selector:], obrk +[ClassName selector:], or obrk [ClassName selector:]\n{error}")
+        result.SetError(
+            f"Usage: obrk -[ClassName selector:], obrk +[ClassName selector:], or obrk [ClassName selector:]\n{error}"
+        )
         return
 
     # Auto-detect method type if not specified
@@ -100,9 +96,5 @@ def breakpoint_on_objc_method(
 def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any]) -> None:
     """Initialize the module by registering the command."""
     module_path = f"{__name__}.breakpoint_on_objc_method"
-    debugger.HandleCommand(
-        'command script add -h "Set breakpoint on Objective-C method. '
-        'Usage: obrk -[ClassName selector:] or obrk +[ClassName classMethod:] or obrk [ClassName selector:] (auto-detect)" '
-        f'-f {module_path} obrk'
-    )
+    debugger.HandleCommand(f'command script add -h "Set breakpoint on Objective-C method" -f {module_path} obrk')
     print(f"[lldb-objc v{__version__}] 'obrk' installed - Set breakpoints on Objective-C methods")
