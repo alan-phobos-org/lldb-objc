@@ -112,9 +112,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Supports both instance methods (`-`) and class methods (`+`)
 - LLDB Python scripting API
 
-[Unreleased]: https://github.com/yourusername/lldb-objc/compare/v1.2.1...HEAD
-[1.2.1]: https://github.com/yourusername/lldb-objc/compare/v1.2.0...v1.2.1
-[1.2.0]: https://github.com/yourusername/lldb-objc/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/yourusername/lldb-objc/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/yourusername/lldb-objc/releases/tag/v1.0.0
+[Unreleased]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.2.0...v1.2.1
+[1.2.0]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/alan-phobos-org/lldb-objc/releases/tag/v1.0.0
 
