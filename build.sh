@@ -103,7 +103,12 @@ cmd_lint() {
 cmd_check() {
     cmd_lint
     cmd_test
-    cmd_test_quick
+    # Only run integration tests if LLDB is available (skip in CI)
+    if command -v lldb >/dev/null 2>&1; then
+        cmd_test_quick
+    else
+        echo "Skipping integration tests (LLDB not available)"
+    fi
 }
 
 cmd_dist() {
