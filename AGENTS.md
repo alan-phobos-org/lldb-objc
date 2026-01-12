@@ -25,7 +25,7 @@ To create a release:
 # Step 2: Update CHANGELOG.md with release notes (requires human/LLM)
 # Add a new section: ## [X.Y.Z] - YYYY-MM-DD
 
-# Step 3: Review docs (CLAUDE.md, README.md) for completed work
+# Step 3: Review docs (AGENTS.md, README.md) for completed work
 # Remove or mark done any TODO items, planned features now implemented, etc.
 
 # Step 4: Create the release commit and tag
@@ -142,7 +142,7 @@ tests/              # Test suite
 2. Add module name to `COMMAND_MODULES` list in `scripts/__init__.py`
 3. Add integration tests in `tests/test_<name>.py`
 4. Extract pure functions to `objc_core.py` and add unit tests in `tests/unit/`
-5. Update README.md and CLAUDE.md command tables
+5. Update README.md and AGENTS.md command tables
 6. Test with `oreload` in LLDB session to verify reload works
 7. Run `./build.sh check` before committing
 
@@ -249,5 +249,10 @@ NSClassFromString() → Class → NSSelectorFromString() → SEL
 ```
 Note: Uses `SBAddress` instead of raw addresses to properly handle ASLR/slide on iOS and other platforms.
 
-## Future Work
-See [docs/PLAN.md](docs/PLAN.md) for roadmap including wildcard `osel`, `oheap`, `ocat`.
+## Documentation
+
+- [docs/PLAN.md](docs/PLAN.md) - Roadmap, current stage, and backlog
+- [docs/DESIGN.md](docs/DESIGN.md) - Architecture and planned features
+- [docs/TESTING.md](docs/TESTING.md) - Testing guide and best practices
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md) - Performance optimization
+- [docs/UI_CONVENTIONS.md](docs/UI_CONVENTIONS.md) - UI formatting conventions

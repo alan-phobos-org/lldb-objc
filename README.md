@@ -353,25 +353,23 @@ ClassName (0x123456789abc)
 
 ## Documentation
 
-- [PLAN.md](docs/PLAN.md) - Future features and roadmap
-- [PERFORMANCE.md](docs/PERFORMANCE.md) - Performance benchmarks and optimization details
-- [UI_CONVENTIONS.md](docs/UI_CONVENTIONS.md) - UI formatting and display conventions
+- [AGENTS.md](AGENTS.md) - Development guide for agents and contributors
+- [docs/PLAN.md](docs/PLAN.md) - Roadmap, current stage, and backlog
+- [docs/DESIGN.md](docs/DESIGN.md) - Architecture and planned features
+- [docs/TESTING.md](docs/TESTING.md) - Testing guide and best practices
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md) - Performance optimization
+- [docs/UI_CONVENTIONS.md](docs/UI_CONVENTIONS.md) - UI formatting conventions
 
 ## Testing
 
-Install dev dependencies first:
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.txt  # Install dependencies
+pytest                               # Unit tests (fast)
+./tests/run_all_tests.py --quick     # Quick integration tests
+./build.sh check                     # Full pre-commit check
 ```
 
-Run tests:
-```bash
-pytest                            # Unit tests (fast)
-./tests/run_all_tests.py          # Integration tests
-./tests/run_all_tests.py --quick  # Quick subset only
-```
-
-See [tests/test_runner.md](tests/test_runner.md) for more details on the test framework.
+See [docs/TESTING.md](docs/TESTING.md) for the full testing guide.
 
 ## Examples
 
