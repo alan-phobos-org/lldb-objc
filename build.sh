@@ -88,16 +88,13 @@ __author__ = "Alan"
 __description__ = "LLDB commands for Objective-C method introspection and debugging"
 EOF
 
-        # Create zip
+        # Create zip in dist folder
         ZIP_NAME="lldb-objc-${VERSION}.zip"
-        (cd "$DIST_DIR" && zip -r "../$ZIP_NAME" lldb-objc)
+        (cd "$DIST_DIR" && zip -r "$ZIP_NAME" lldb-objc && rm -rf lldb-objc)
 
         echo ""
-        echo "Created: $ZIP_NAME"
-        ls -la "$ZIP_NAME"
-
-        # Cleanup
-        rm -rf "$DIST_DIR"
+        echo "Created: $DIST_DIR/$ZIP_NAME"
+        ls -la "$DIST_DIR/$ZIP_NAME"
         ;;
     deploy-local)
         # Build dist and install locally
@@ -107,10 +104,10 @@ EOF
         TEMP_DIR=$(mktemp -d)
 
         echo ""
-        echo "Installing locally from $ZIP_NAME..."
+        echo "Installing locally from dist/$ZIP_NAME..."
 
         # Extract and install
-        unzip -q "$ZIP_NAME" -d "$TEMP_DIR"
+        unzip -q "dist/$ZIP_NAME" -d "$TEMP_DIR"
         (cd "$TEMP_DIR/lldb-objc" && python3 install.py)
 
         # Cleanup

@@ -44,10 +44,12 @@ except ImportError:
     __version__ = "unknown"
 
 from objc_utils import (
-    parse_method_signature,
     resolve_method_address,
-    format_method_name,
     get_arch_registers,
+)
+from objc_core import (
+    parse_method_signature,
+    format_method_name,
 )
 
 # Type aliases for clarity

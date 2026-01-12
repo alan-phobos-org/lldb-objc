@@ -4,13 +4,14 @@ LLDB script for explaining disassembly using an LLM.
 
 Usage: oexplain <address|$var|expression>   # Explain disassembly at address
        oexplain -a <address>                # Annotate each line of disassembly
-       oexplain --claude <address>          # Use Claude CLI instead of llm
+       oexplain --claude <address>          # Use Claude CLI (opus model)
+       oexplain --claude-haiku <address>    # Use Claude CLI (haiku model)
        oexplain 0x123456789abc              # Explain by hex address
        oexplain $0                          # Explain LLDB variable
        oexplain (IMP)[NSString class]       # Explain by expression
 
 This command disassembles the function at the given address and sends it to
-an LLM for analysis (llm by default, claude with --claude flag).
+an LLM for analysis (llm by default, claude with --claude/--claude-haiku flags).
 """
 
 from __future__ import annotations
@@ -40,10 +41,16 @@ from objc_llm import (
 )
 
 
-EXPLAIN_PROMPT = """You are an expert reverse engineer. Given the following \
-arm64 disassembly and context, explain very concisely what this function does \
-as you would to a security researcher. Avoid boilerplate. Include a compact \
-view of the first 5 functions it will call.
+EXPLAIN_PROMPT = """You are an expert reverse engineer specializing in Apple \
+platforms. Given the following arm64 disassembly and context, explain very \
+concisely what this function does as you would to a security researcher. \
+Avoid boilerplate. Include a compact view of the first 5 functions it will call.
+
+Platform notes:
+- ARM64 calling convention: x0-x7 are arguments, x0 is return value
+- For Objective-C: x0=self, x1=_cmd (selector), x2+ are method arguments
+- objc_msgSend(receiver, selector, args...) dispatches method calls
+- Use RESOLVED STRINGS and RESOLVED SELECTORS to understand constants and methods
 
 {context}
 
@@ -52,12 +59,17 @@ DISASSEMBLY:
 
 Explain concisely:"""
 
-ANNOTATE_PROMPT = """You are an expert reverse engineer. Given the following \
-arm64 disassembly and context, reproduce the disassembly exactly, but add \
-concise high-level annotations as comments on lines where the purpose isn't \
-obvious. Focus on what's happening semantically (e.g., "// get string length", \
-"// check for nil", "// call objc_msgSend with selector"). Skip trivial \
-operations like stack frame setup. Keep annotations brief.
+ANNOTATE_PROMPT = """You are an expert reverse engineer specializing in Apple \
+platforms. Given the following arm64 disassembly and context, reproduce the \
+disassembly exactly, but add concise high-level annotations as comments on \
+lines where the purpose isn't obvious. Focus on what's happening semantically \
+(e.g., "// get string length", "// check for nil", "// call [obj method]"). \
+Skip trivial operations like stack frame setup. Keep annotations brief.
+
+Platform notes:
+- ARM64 calling convention: x0-x7 are arguments, x0 is return value
+- For Objective-C: x0=self, x1=_cmd (selector), x2+ are method arguments
+- Use RESOLVED SELECTORS to annotate objc_msgSend calls with actual method names
 
 {context}
 
@@ -67,7 +79,7 @@ DISASSEMBLY:
 Annotated disassembly:"""
 
 
-def parse_args(command: str) -> tuple[bool, bool, str]:
+def parse_args(command: str) -> tuple[bool, str | None, str]:
     """
     Parse command arguments.
 
@@ -75,11 +87,12 @@ def parse_args(command: str) -> tuple[bool, bool, str]:
         command: Raw command string
 
     Returns:
-        (annotate_mode, use_claude, address) tuple
+        (annotate_mode, claude_model, address) tuple
+        claude_model is None for llm, "opus" for --claude, "haiku" for --claude-haiku
     """
     parts = command.strip().split()
     annotate = False
-    use_claude = False
+    claude_model = None
     address_parts = []
 
     i = 0
@@ -87,12 +100,14 @@ def parse_args(command: str) -> tuple[bool, bool, str]:
         if parts[i] in ("-a", "--annotate"):
             annotate = True
         elif parts[i] == "--claude":
-            use_claude = True
+            claude_model = "opus"
+        elif parts[i] == "--claude-haiku":
+            claude_model = "haiku"
         else:
             address_parts.append(parts[i])
         i += 1
 
-    return annotate, use_claude, " ".join(address_parts)
+    return annotate, claude_model, " ".join(address_parts)
 
 
 def explain_command(
@@ -104,7 +119,7 @@ def explain_command(
     """
     LLDB command to explain disassembly using an LLM.
 
-    Usage: oexplain [-a|--annotate] [--claude] <address|$var|expression>
+    Usage: oexplain [-a|--annotate] [--claude|--claude-haiku] <address|$var|expression>
     """
     target = debugger.GetSelectedTarget()
     process = target.GetProcess()
@@ -113,10 +128,10 @@ def explain_command(
         result.SetError("Process must be running and stopped")
         return
 
-    annotate, use_claude, address = parse_args(command)
+    annotate, claude_model, address = parse_args(command)
 
     if not address:
-        result.SetError("Usage: oexplain [-a|--annotate] [--claude] <address|$var|expression>")
+        result.SetError("Usage: oexplain [-a|--annotate] [--claude|--claude-haiku] <address|$var|expression>")
         return
 
     # Get disassembly
@@ -129,8 +144,8 @@ def explain_command(
         result.SetError("No disassembly output")
         return
 
-    # Build context (symbol info + register state)
-    context = build_context(debugger, address)
+    # Build context (symbol info + register state + resolved strings/selectors)
+    context = build_context(debugger, address, disasm)
 
     # Select prompt based on mode
     prompt_template = ANNOTATE_PROMPT if annotate else EXPLAIN_PROMPT
@@ -140,13 +155,16 @@ def explain_command(
     )
 
     mode_desc = "annotating" if annotate else "explaining"
-    backend = "Claude" if use_claude else "llm"
+    if claude_model:
+        backend = f"Claude ({claude_model})"
+    else:
+        backend = "llm"
 
     # Call LLM
     print(f"Sending {len(disasm.splitlines())} lines of disassembly to {backend} ({mode_desc})...")
     start_time = time.time()
-    if use_claude:
-        success, explanation = call_claude(prompt)
+    if claude_model:
+        success, explanation = call_claude(prompt, claude_model)
     else:
         success, explanation = call_llm(prompt)
     elapsed = time.time() - start_time

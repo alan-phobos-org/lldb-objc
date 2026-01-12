@@ -3,13 +3,14 @@
 LLDB script for decompiling disassembly using an LLM.
 
 Usage: odecompile <address|$var|expression>   # Decompile function at address
-       odecompile --claude <address>          # Use Claude CLI instead of llm
+       odecompile --claude <address>          # Use Claude CLI (opus model)
+       odecompile --claude-haiku <address>    # Use Claude CLI (haiku model)
        odecompile 0x123456789abc              # Decompile by hex address
        odecompile $0                          # Decompile LLDB variable
        odecompile $pc                         # Decompile current function
 
 This command disassembles the function at the given address and sends it
-to an LLM for decompilation.
+to an LLM for decompilation (llm by default, claude with --claude/--claude-haiku flags).
 """
 
 from __future__ import annotations
@@ -39,8 +40,16 @@ from objc_llm import (
 )
 
 
-DECOMPILE_PROMPT = """You are an expert reverse engineer. Given the following \
-arm64 disassembly and context, produce a concise pseudocode decompilation.
+DECOMPILE_PROMPT = """You are an expert reverse engineer specializing in Apple \
+platforms. Given the following arm64 disassembly and context, produce a concise \
+pseudocode decompilation.
+
+Platform notes:
+- ARM64 calling convention: x0-x7 are arguments, x0 is return value
+- For Objective-C: x0=self, x1=_cmd (selector), x2+ are method arguments
+- objc_msgSend(receiver, selector, args...) dispatches method calls
+- Use the RESOLVED STRINGS and RESOLVED SELECTORS sections to understand what \
+string constants and method selectors are being used
 
 Guidelines:
 - Use C-like syntax with Objective-C conventions where appropriate
@@ -48,6 +57,7 @@ Guidelines:
 - Show the high-level logic, not every instruction
 - Include brief comments for non-obvious operations
 - If objc_msgSend calls are visible, show them as [receiver selector:args]
+- Use resolved selector names to identify which methods are being called
 - Keep it concise - focus on what the function does, not boilerplate
 - Don't summarise at the end or provide any other context beyond the source code
 
@@ -59,7 +69,7 @@ DISASSEMBLY:
 Provide the decompiled pseudocode:"""
 
 
-def parse_args(command: str) -> Tuple[bool, str]:
+def parse_args(command: str) -> Tuple[str | None, str]:
     """
     Parse command arguments.
 
@@ -67,21 +77,24 @@ def parse_args(command: str) -> Tuple[bool, str]:
         command: Raw command string
 
     Returns:
-        (use_claude, address) tuple
+        (claude_model, address) tuple
+        claude_model is None for llm, "opus" for --claude, "haiku" for --claude-haiku
     """
     parts = command.strip().split()
-    use_claude = False
+    claude_model = None
     address_parts = []
 
     i = 0
     while i < len(parts):
         if parts[i] == "--claude":
-            use_claude = True
+            claude_model = "opus"
+        elif parts[i] == "--claude-haiku":
+            claude_model = "haiku"
         else:
             address_parts.append(parts[i])
         i += 1
 
-    return use_claude, " ".join(address_parts)
+    return claude_model, " ".join(address_parts)
 
 
 def decompile_command(
@@ -93,7 +106,7 @@ def decompile_command(
     """
     LLDB command to decompile disassembly using an LLM.
 
-    Usage: odecompile [--claude] <address|$var|expression>
+    Usage: odecompile [--claude|--claude-haiku] <address|$var|expression>
     """
     target = debugger.GetSelectedTarget()
     process = target.GetProcess()
@@ -102,10 +115,10 @@ def decompile_command(
         result.SetError("Process must be running and stopped")
         return
 
-    use_claude, address = parse_args(command)
+    claude_model, address = parse_args(command)
 
     if not address:
-        result.SetError("Usage: odecompile [--claude] <address|$var|expression>")
+        result.SetError("Usage: odecompile [--claude|--claude-haiku] <address|$var|expression>")
         return
 
     # Get disassembly
@@ -118,8 +131,8 @@ def decompile_command(
         result.SetError("No disassembly output")
         return
 
-    # Build context (symbol info + register state)
-    context = build_context(debugger, address)
+    # Build context (symbol info + register state + resolved strings/selectors)
+    context = build_context(debugger, address, disasm)
 
     # Build the prompt
     prompt = DECOMPILE_PROMPT.format(
@@ -127,14 +140,17 @@ def decompile_command(
         disassembly=disasm.strip(),
     )
 
-    backend = "Claude" if use_claude else "llm"
+    if claude_model:
+        backend = f"Claude ({claude_model})"
+    else:
+        backend = "llm"
 
     # Call LLM
     print(f"Sending {len(disasm.splitlines())} lines of disassembly to {backend} for decompilation...")
     start_time = time.time()
 
-    if use_claude:
-        success, decompilation = call_claude(prompt)
+    if claude_model:
+        success, decompilation = call_claude(prompt, claude_model)
     else:
         success, decompilation = call_llm(prompt)
 

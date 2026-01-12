@@ -13,8 +13,9 @@ This module provides common functionality:
 from __future__ import annotations
 
 import lldb
+import re
 import subprocess
-from typing import Tuple
+from typing import List, Tuple
 
 
 def get_disassembly(debugger: lldb.SBDebugger, address: str) -> Tuple[bool, str]:
@@ -141,6 +142,165 @@ def get_register_state(debugger: lldb.SBDebugger) -> Tuple[bool, str]:
     return False, "Could not read registers"
 
 
+def get_platform_info(debugger: lldb.SBDebugger) -> Tuple[bool, str]:
+    """
+    Get platform and architecture information.
+
+    Args:
+        debugger: LLDB debugger instance
+
+    Returns:
+        (success, output) tuple with platform details
+    """
+    target = debugger.GetSelectedTarget()
+    if not target.IsValid():
+        return False, "No valid target"
+
+    triple = target.GetTriple()  # e.g., "arm64-apple-ios17.0.0"
+    parts = triple.split("-") if triple else []
+
+    arch = parts[0] if parts else "unknown"
+    vendor = parts[1] if len(parts) > 1 else "unknown"
+    os_info = parts[2] if len(parts) > 2 else "unknown"
+
+    # Check for pointer authentication (arm64e)
+    arch_desc = arch
+    if arch == "arm64e":
+        arch_desc = "arm64e (pointer authentication enabled)"
+
+    lines = [
+        f"Architecture: {arch_desc}",
+        f"Platform: {vendor}-{os_info}",
+        "Memory: stack grows down, frame pointer in x29, link register in x30",
+    ]
+
+    return True, "\n".join(lines)
+
+
+def extract_addresses_from_disassembly(disassembly: str) -> List[int]:
+    """
+    Extract potential addresses from disassembly output.
+
+    Looks for hex addresses in adrp, add, ldr patterns.
+
+    Args:
+        disassembly: Raw disassembly text
+
+    Returns:
+        List of unique addresses found
+    """
+    addresses = set()
+
+    # Match addresses in comments like "; 0x1234567890"
+    comment_pattern = r";\s*(0x[0-9a-fA-F]+)"
+    for match in re.finditer(comment_pattern, disassembly):
+        try:
+            addr = int(match.group(1), 16)
+            if addr > 0x1000:  # Skip small values
+                addresses.add(addr)
+        except ValueError:
+            pass
+
+    # Match addresses in bracket notation like "[0x1234567890]"
+    bracket_pattern = r"\[(0x[0-9a-fA-F]+)\]"
+    for match in re.finditer(bracket_pattern, disassembly):
+        try:
+            addr = int(match.group(1), 16)
+            if addr > 0x1000:
+                addresses.add(addr)
+        except ValueError:
+            pass
+
+    return list(addresses)
+
+
+def resolve_string_literals(debugger: lldb.SBDebugger, disassembly: str) -> Tuple[bool, str]:
+    """
+    Extract and resolve string literals from addresses in disassembly.
+
+    Args:
+        debugger: LLDB debugger instance
+        disassembly: Raw disassembly text
+
+    Returns:
+        (success, output) tuple with resolved strings
+    """
+    addresses = extract_addresses_from_disassembly(disassembly)
+    if not addresses:
+        return False, "No addresses found"
+
+    ci = debugger.GetCommandInterpreter()
+    strings = []
+
+    for addr in addresses[:20]:  # Limit to avoid too many lookups
+        result = lldb.SBCommandReturnObject()
+
+        # Try to read as C string
+        ci.HandleCommand(f"memory read -f s -c 1 {addr}", result)
+
+        if result.Succeeded():
+            output = result.GetOutput().strip()
+            # Parse output like: 0x1234: "hello world"
+            if '"' in output:
+                try:
+                    string_val = output.split('"', 1)[1].rsplit('"', 1)[0]
+                    # Only include if it looks like a real string
+                    if len(string_val) >= 2 and string_val.isprintable():
+                        strings.append(f'  0x{addr:x}: "{string_val}"')
+                except (IndexError, ValueError):
+                    pass
+
+    if strings:
+        return True, "String literals:\n" + "\n".join(strings[:10])  # Limit output
+    return False, "No strings resolved"
+
+
+def resolve_selectors(debugger: lldb.SBDebugger, disassembly: str) -> Tuple[bool, str]:
+    """
+    Resolve selectors referenced in the disassembly.
+
+    Looks for selector references and resolves them via sel_getName.
+
+    Args:
+        debugger: LLDB debugger instance
+        disassembly: Raw disassembly text
+
+    Returns:
+        (success, output) tuple with resolved selectors
+    """
+    # Find addresses that might be selectors (referenced before objc_msgSend)
+    addresses = extract_addresses_from_disassembly(disassembly)
+    if not addresses:
+        return False, "No addresses found"
+
+    ci = debugger.GetCommandInterpreter()
+    selectors = []
+
+    for addr in addresses[:20]:
+        result = lldb.SBCommandReturnObject()
+
+        # Try to interpret as selector
+        ci.HandleCommand(
+            f"expr -l objc -- (char *)sel_getName((SEL){addr})",
+            result,
+        )
+
+        if result.Succeeded():
+            output = result.GetOutput().strip()
+            if '"' in output:
+                try:
+                    sel_name = output.split('"')[1]
+                    # Valid selectors don't have spaces and aren't empty
+                    if sel_name and " " not in sel_name and len(sel_name) < 100:
+                        selectors.append(f"  0x{addr:x}: @selector({sel_name})")
+                except (IndexError, ValueError):
+                    pass
+
+    if selectors:
+        return True, "Selectors:\n" + "\n".join(selectors[:10])
+    return False, "No selectors resolved"
+
+
 def call_llm(prompt: str) -> Tuple[bool, str]:
     """
     Send prompt to llm CLI.
@@ -173,12 +333,13 @@ def call_llm(prompt: str) -> Tuple[bool, str]:
         return False, f"Error calling llm: {e}"
 
 
-def call_claude(prompt: str) -> Tuple[bool, str]:
+def call_claude(prompt: str, model: str = "opus") -> Tuple[bool, str]:
     """
     Send prompt to Claude via CLI.
 
     Args:
         prompt: The full prompt to send
+        model: Model to use (opus, haiku, etc.)
 
     Returns:
         (success, output) tuple
@@ -190,7 +351,7 @@ def call_claude(prompt: str) -> Tuple[bool, str]:
                 "-p",
                 prompt,
                 "--model",
-                "opus",
+                model,
             ],
             capture_output=True,
             text=True,
@@ -220,18 +381,24 @@ def format_output(text: str) -> str:
     return "\n".join(f">> {line}" for line in lines)
 
 
-def build_context(debugger: lldb.SBDebugger, address: str) -> str:
+def build_context(debugger: lldb.SBDebugger, address: str, disassembly: str = "") -> str:
     """
-    Build context string with symbol info and register state.
+    Build context string with symbol info, register state, and resolved references.
 
     Args:
         debugger: LLDB debugger instance
         address: Address being analyzed
+        disassembly: Raw disassembly text (for resolving strings/selectors)
 
     Returns:
         Context string to include in LLM prompt
     """
     context_parts = []
+
+    # Get platform/architecture info
+    success, platform_info = get_platform_info(debugger)
+    if success:
+        context_parts.append(f"PLATFORM:\n{platform_info}")
 
     # Get symbol info
     success, symbol_info = get_symbol_info(debugger, address)
@@ -242,6 +409,16 @@ def build_context(debugger: lldb.SBDebugger, address: str) -> str:
     success, reg_state = get_register_state(debugger)
     if success:
         context_parts.append(f"REGISTER STATE:\n{reg_state}")
+
+    # Resolve strings and selectors from disassembly
+    if disassembly:
+        success, strings = resolve_string_literals(debugger, disassembly)
+        if success:
+            context_parts.append(f"RESOLVED STRINGS:\n{strings}")
+
+        success, selectors = resolve_selectors(debugger, disassembly)
+        if success:
+            context_parts.append(f"RESOLVED SELECTORS:\n{selectors}")
 
     if context_parts:
         return "\n\n".join(context_parts)
