@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 *.so
 .Python
+.venv/
 
 # LLDB backups
 *.lldbinit.backup
