@@ -2,6 +2,10 @@
 
 LLDB commands for Objective-C runtime introspection, including private classes/methods.
 
+## Vision
+
+Commands that feel like native debugger features, not bolted-on scripts. Output should be scannable at a glance - primary info prominent, secondary details muted. Fast enough to run speculatively. Error messages should suggest what the user probably meant. Handle edge cases gracefully (nil objects, swizzled methods, stripped binaries) rather than crashing or producing confusing output.
+
 ## Development Workflow
 
 Before committing, always run:
