@@ -66,6 +66,7 @@ Commands:
   prepare-release  Run all release checks and show changes
   release X.Y.Z    Create release commit and tag
   clean            Remove build artifacts
+  status           Show project status (working copy, remote, CI, releases)
 EOF
 }
 
@@ -270,6 +271,80 @@ cmd_clean() {
     echo "✓ Cleaned build artifacts"
 }
 
+cmd_status() {
+    echo "=== Project Status ==="
+    echo ""
+
+    # Version
+    echo "Version: $VERSION"
+    LAST_TAG=$(git -C "$ROOT_DIR" describe --tags --abbrev=0 2>/dev/null || echo "none")
+    echo "Latest release: $LAST_TAG"
+    echo ""
+
+    # Working copy
+    echo "--- Working Copy ---"
+    if git -C "$ROOT_DIR" diff --quiet && git -C "$ROOT_DIR" diff --cached --quiet; then
+        UNTRACKED=$(git -C "$ROOT_DIR" ls-files --others --exclude-standard | wc -l | tr -d ' ')
+        if [ "$UNTRACKED" -eq 0 ]; then
+            echo "Clean"
+        else
+            echo "Clean (${UNTRACKED} untracked files)"
+        fi
+    else
+        echo "Dirty"
+        git -C "$ROOT_DIR" status --short | head -10
+        TOTAL=$(git -C "$ROOT_DIR" status --short | wc -l | tr -d ' ')
+        [ "$TOTAL" -gt 10 ] && echo "... and $((TOTAL - 10)) more"
+    fi
+    echo ""
+
+    # Remote sync
+    echo "--- Remote Status ---"
+    git -C "$ROOT_DIR" fetch origin --quiet 2>/dev/null || echo "Warning: could not fetch origin"
+    LOCAL=$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null)
+    REMOTE=$(git -C "$ROOT_DIR" rev-parse origin/main 2>/dev/null || echo "unknown")
+    if [ "$LOCAL" = "$REMOTE" ]; then
+        echo "In sync with origin/main"
+    else
+        AHEAD=$(git -C "$ROOT_DIR" rev-list --count origin/main..HEAD 2>/dev/null || echo "?")
+        BEHIND=$(git -C "$ROOT_DIR" rev-list --count HEAD..origin/main 2>/dev/null || echo "?")
+        [ "$AHEAD" != "0" ] && echo "Ahead of origin/main by $AHEAD commits"
+        [ "$BEHIND" != "0" ] && echo "Behind origin/main by $BEHIND commits"
+    fi
+    echo ""
+
+    # CI status (requires gh CLI)
+    echo "--- CI Status ---"
+    if command -v gh &>/dev/null; then
+        (cd "$ROOT_DIR" && gh run list --limit 3 2>/dev/null) || echo "Could not fetch CI status"
+    else
+        echo "gh CLI not installed - skipping CI status"
+    fi
+    echo ""
+
+    # Recent releases
+    echo "--- Recent Releases ---"
+    if command -v gh &>/dev/null; then
+        (cd "$ROOT_DIR" && gh release list --limit 3 2>/dev/null) || echo "No releases found"
+    else
+        git -C "$ROOT_DIR" tag --sort=-creatordate | head -3 || echo "No tags found"
+    fi
+    echo ""
+
+    # Changes since last release
+    if [ "$LAST_TAG" != "none" ]; then
+        echo "--- Changes Since $LAST_TAG ---"
+        COMMIT_COUNT=$(git -C "$ROOT_DIR" rev-list --count "$LAST_TAG"..HEAD 2>/dev/null || echo "0")
+        echo "$COMMIT_COUNT commits"
+        if [ "$COMMIT_COUNT" != "0" ] && [ "$COMMIT_COUNT" -lt 20 ]; then
+            git -C "$ROOT_DIR" log --oneline "$LAST_TAG"..HEAD
+        elif [ "$COMMIT_COUNT" -ge 20 ]; then
+            git -C "$ROOT_DIR" log --oneline "$LAST_TAG"..HEAD | head -10
+            echo "... and $((COMMIT_COUNT - 10)) more commits"
+        fi
+    fi
+}
+
 # =============================================================================
 # Commands
 # =============================================================================
@@ -321,6 +396,10 @@ case "${1:-help}" in
 
     clean)
         cmd_clean
+        ;;
+
+    status)
+        cmd_status
         ;;
 
     help|*)
