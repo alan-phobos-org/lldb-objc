@@ -166,6 +166,9 @@ Primary info in normal text; secondary (types, hierarchy) in dim gray: `\033[90m
 - **ASLR/address handling**: Always use `SBAddress` for breakpoints, never raw ints. Load addresses from runtime (e.g., `class_getMethodImplementation()`) are already ASLR-adjusted. Use `target.ResolveLoadAddress(addr)` → `SBAddress`, then `BreakpointCreateBySBAddress(sbaddr)` not `BreakpointCreateByAddress(int)`. iOS has aggressive ASLR—bugs may only manifest there.
 - **API validation**: Verify LLDB methods exist via `lldb -b -o "script help(lldb.SBTarget.MethodName)"`. Check signatures with `help()`, inspect available methods with `dir()`. Test in isolation before integrating.
 - **Function signature changes**: When changing return types (e.g., `int` → `SBAddress`), grep for all callers and update them atomically in one change.
+- **Import locations**: Pure Python utilities belong in `objc_core.py` (e.g., `unquote_string`, `extract_category_from_symbol`). Import from the correct module—don't assume re-exports exist.
+- **Caching with filter flags**: When caching data, ensure partial queries (e.g., `--instance` only) don't corrupt the cache for full queries. Either skip caching, or always fetch complete data and filter at display time.
+- **Memory allocation cleanup**: When allocating memory in the target process via `malloc()`, ensure cleanup happens even on exceptions. Consider try/finally patterns for `EvaluateExpression("free(...)")`.
 
 ### Testing & Verification Protocol
 

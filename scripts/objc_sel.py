@@ -48,7 +48,11 @@ try:
 except ImportError:
     __version__ = "unknown"
 
-from objc_core import unquote_string
+from objc_core import unquote_string, extract_category_from_symbol
+
+# ANSI color codes for consistent UI
+ANSI_DIM = "\033[90m"
+ANSI_RESET = "\033[0m"
 
 # Type aliases
 TimingDict = Dict[str, Any]
@@ -63,6 +67,34 @@ DEFAULT_BATCH_SIZE = 50
 #             'class': [...], 'timestamp': time}}}
 # category is None if method is not from a category (i.e., defined in the base class)
 _selector_cache: Dict[int, Dict[str, CacheEntry]] = {}
+
+
+def _display_methods(
+    methods: List[Tuple[str, int, Optional[str]]],
+    method_type: str,
+    prefix: str,
+) -> None:
+    """
+    Display a list of methods with consistent formatting.
+
+    Args:
+        methods: List of (selector_name, imp_address, category) tuples
+        method_type: "Instance" or "Class" for the section header
+        prefix: "-" for instance methods, "+" for class methods
+    """
+    if methods:
+        print(f"{method_type} methods ({len(methods)}):")
+        for method in sorted(methods, key=lambda x: x[0]):
+            sel_name = method[0]
+            imp_addr = method[1]
+            category = method[2] if len(method) > 2 else None
+            if imp_addr:
+                cat_str = f"({category}) " if category else ""
+                print(f"  {prefix}{sel_name}  {ANSI_DIM}{cat_str}0x{imp_addr:x}{ANSI_RESET}")
+            else:
+                print(f"  {prefix}{sel_name}")
+    else:
+        print(f"No {method_type.lower()} methods found")
 
 
 def find_objc_selectors(
@@ -96,6 +128,11 @@ def find_objc_selectors(
     verbose = "--verbose" in args
     instance_only = "--instance" in args
     class_only = "--class" in args
+
+    # Validate conflicting flags
+    if instance_only and class_only:
+        result.SetError("Cannot use both --instance and --class flags together")
+        return
 
     # Remove flags from args
     non_flag_args = [arg for arg in args if not arg.startswith("--")]
@@ -187,39 +224,33 @@ def find_objc_selectors(
 
         timing["setup"] = time.time() - setup_start
 
-        # Find instance methods (unless --class flag is set)
+        # Always fetch both method types to ensure cache is complete
+        # Filter flags only affect display, not caching
         instance_start = time.time()
-        if not class_only:
-            all_instance_methods, inst_timing = get_methods_optimized(
-                frame, process, class_ptr, is_instance=True, resolve_categories=True
-            )
-            timing["expression_count"] += inst_timing["expression_count"]
-            timing["memory_read_count"] += inst_timing["memory_read_count"]
-        else:
-            all_instance_methods = []
-            inst_timing = {"expression_count": 0, "memory_read_count": 0}
+        all_instance_methods, inst_timing = get_methods_optimized(
+            frame, process, class_ptr, is_instance=True, resolve_categories=True
+        )
+        timing["expression_count"] += inst_timing["expression_count"]
+        timing["memory_read_count"] += inst_timing["memory_read_count"]
         timing["instance_methods"] = time.time() - instance_start
 
-        # Get metaclass for class methods (unless --instance flag is set)
+        # Get metaclass for class methods
         class_start = time.time()
-        if not instance_only:
-            metaclass_expr = f"(Class)object_getClass((id)0x{class_ptr:x})"
-            metaclass_result = frame.EvaluateExpression(metaclass_expr)
-            timing["expression_count"] += 1
+        metaclass_expr = f"(Class)object_getClass((id)0x{class_ptr:x})"
+        metaclass_result = frame.EvaluateExpression(metaclass_expr)
+        timing["expression_count"] += 1
 
-            if metaclass_result.IsValid() and not metaclass_result.GetError().Fail():
-                metaclass_ptr = metaclass_result.GetValueAsUnsigned()
-                all_class_methods, cls_timing = get_methods_optimized(
-                    frame,
-                    process,
-                    metaclass_ptr,
-                    is_instance=False,
-                    resolve_categories=True,
-                )
-                timing["expression_count"] += cls_timing["expression_count"]
-                timing["memory_read_count"] += cls_timing["memory_read_count"]
-            else:
-                all_class_methods = []
+        if metaclass_result.IsValid() and not metaclass_result.GetError().Fail():
+            metaclass_ptr = metaclass_result.GetValueAsUnsigned()
+            all_class_methods, cls_timing = get_methods_optimized(
+                frame,
+                process,
+                metaclass_ptr,
+                is_instance=False,
+                resolve_categories=True,
+            )
+            timing["expression_count"] += cls_timing["expression_count"]
+            timing["memory_read_count"] += cls_timing["memory_read_count"]
         else:
             all_class_methods = []
         timing["class_methods"] = time.time() - class_start
@@ -243,50 +274,24 @@ def find_objc_selectors(
             instance_methods = all_instance_methods
             class_methods = all_class_methods
 
+    # Apply filter flags for display (after caching complete data)
+    if class_only:
+        instance_methods = []
+    if instance_only:
+        class_methods = []
+
     # Display results
     print()
 
     # Show instance methods unless --class flag is set
     if not class_only:
-        if instance_methods:
-            print(f"Instance methods ({len(instance_methods)}):")
-            for method in sorted(instance_methods, key=lambda x: x[0]):
-                sel_name = method[0]
-                imp_addr = method[1]
-                category = method[2] if len(method) > 2 else None
-                # Display address in dimmed gray text, with category if available
-                if imp_addr:
-                    if category:
-                        print(f"  -{sel_name}  \033[90m({category}) 0x{imp_addr:x}\033[0m")
-                    else:
-                        print(f"  -{sel_name}  \033[90m0x{imp_addr:x}\033[0m")
-                else:
-                    print(f"  -{sel_name}")
-        else:
-            print("No instance methods found")
+        _display_methods(instance_methods, "Instance", "-")
 
     # Show class methods unless --instance flag is set
     if not instance_only:
-        if class_methods:
-            if not class_only:
-                print()  # Extra newline between sections
-            print(f"Class methods ({len(class_methods)}):")
-            for method in sorted(class_methods, key=lambda x: x[0]):
-                sel_name = method[0]
-                imp_addr = method[1]
-                category = method[2] if len(method) > 2 else None
-                # Display address in dimmed gray text, with category if available
-                if imp_addr:
-                    if category:
-                        print(f"  +{sel_name}  \033[90m({category}) 0x{imp_addr:x}\033[0m")
-                    else:
-                        print(f"  +{sel_name}  \033[90m0x{imp_addr:x}\033[0m")
-                else:
-                    print(f"  +{sel_name}")
-        else:
-            if not class_only:
-                print()
-            print("No class methods found")
+        if not class_only:
+            print()  # Extra newline between sections
+        _display_methods(class_methods, "Class", "+")
 
     total = len(instance_methods) + len(class_methods)
     total_unfiltered = len(all_instance_methods) + len(all_class_methods)
@@ -348,8 +353,9 @@ def matches_pattern(selector_name: str, pattern: Optional[str]) -> bool:
         regex_pattern = f"^{regex_pattern}$"
         try:
             return bool(re.match(regex_pattern, selector_name, re.IGNORECASE))
-        except re.error:
+        except re.error as e:
             # Fallback to substring match if regex is invalid
+            print(f"Warning: Invalid pattern '{pattern}' ({e}), using substring match")
             return pattern.lower() in selector_name.lower()
     else:
         # Simple substring matching (case-insensitive)
@@ -564,6 +570,8 @@ def get_methods_optimized(
 
                 if error.Success() and sel_name:
                     selectors.append((sel_name, imp_addr, None))  # Category resolved later
+        else:
+            print(f"Warning: Failed to read batch {batch_idx // batch_size + 1}, some methods may be missing")
 
         # Free the info buffer
         frame.EvaluateExpression(f"(void)free((void *)0x{info_ptr:x})")
@@ -578,8 +586,6 @@ def get_methods_optimized(
 
     # Optionally resolve category info from symbols
     if resolve_categories and selectors:
-        from objc_utils import extract_category_from_symbol
-
         target = frame.GetThread().GetProcess().GetTarget()
         methods_with_categories = []
         for sel_name, imp_addr, _ in selectors:
@@ -596,92 +602,6 @@ def get_methods_optimized(
         selectors = methods_with_categories
 
     return selectors, timing
-
-
-def get_methods(
-    frame: lldb.SBFrame,
-    class_ptr: int,
-    is_instance: bool = True,
-    pattern: Optional[str] = None,
-) -> List[str]:
-    """
-    Get all methods for a class using class_copyMethodList.
-    Returns a list of selector names.
-
-    NOTE: This is the legacy unoptimized implementation kept for reference.
-    Use get_methods_optimized() for better performance.
-    """
-    # Allocate space for method count
-    count_var_expr = "(unsigned int *)malloc(sizeof(unsigned int))"
-    count_var_result = frame.EvaluateExpression(count_var_expr)
-
-    if not count_var_result.IsValid() or count_var_result.GetError().Fail():
-        print("Warning: Failed to allocate count variable")
-        return []
-
-    count_var_ptr = count_var_result.GetValueAsUnsigned()
-
-    # Copy method list
-    method_list_expr = f"(void *)class_copyMethodList((Class)0x{class_ptr:x}, (unsigned int *)0x{count_var_ptr:x})"
-    method_list_result = frame.EvaluateExpression(method_list_expr)
-
-    if not method_list_result.IsValid() or method_list_result.GetError().Fail():
-        print(f"Warning: class_copyMethodList failed: {method_list_result.GetError()}")
-        # Clean up
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
-        return []
-
-    method_list_ptr = method_list_result.GetValueAsUnsigned()
-
-    # Read the count
-    count_read_expr = f"(unsigned int)(*(unsigned int *)0x{count_var_ptr:x})"
-    count_read_result = frame.EvaluateExpression(count_read_expr)
-
-    if not count_read_result.IsValid() or count_read_result.GetError().Fail():
-        print("Warning: Failed to read method count")
-        # Clean up
-        if method_list_ptr != 0:
-            frame.EvaluateExpression(f"(void)free((void *)0x{method_list_ptr:x})")
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
-        return []
-
-    method_count = count_read_result.GetValueAsUnsigned()
-
-    # Collect selector names
-    selectors = []
-
-    for i in range(method_count):
-        # Get method at index
-        method_ptr_expr = f"(void *)((void **)0x{method_list_ptr:x})[{i}]"
-        method_ptr_result = frame.EvaluateExpression(method_ptr_expr)
-
-        if not method_ptr_result.IsValid() or method_ptr_result.GetError().Fail():
-            continue
-
-        method_ptr = method_ptr_result.GetValueAsUnsigned()
-
-        if method_ptr == 0:
-            continue
-
-        # Get selector name using method_getName
-        sel_name_expr = f"(const char *)sel_getName((SEL)method_getName((void *)0x{method_ptr:x}))"
-        sel_name_result = frame.EvaluateExpression(sel_name_expr)
-
-        if sel_name_result.IsValid() and not sel_name_result.GetError().Fail():
-            sel_name = sel_name_result.GetSummary()
-            if sel_name:
-                sel_name = unquote_string(sel_name)
-
-                # Apply pattern filter if provided
-                if matches_pattern(sel_name, pattern):
-                    selectors.append(sel_name)
-
-    # Clean up allocated memory
-    if method_list_ptr != 0:
-        frame.EvaluateExpression(f"(void)free((void *)0x{method_list_ptr:x})")
-    frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
-
-    return selectors
 
 
 def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any]) -> None:
