@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-01-12
+
+### Fixed
+- Release workflow simplified to use build.sh dist
+- Skip integration tests in CI when LLDB not available
+
 ## [1.2.2] - 2026-01-12
 
 ### Added
@@ -123,7 +129,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Supports both instance methods (`-`) and class methods (`+`)
 - LLDB Python scripting API
 
-[Unreleased]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.2.2...HEAD
+[Unreleased]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.2.3...HEAD
+[1.2.3]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.1.0...v1.2.0
