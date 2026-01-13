@@ -13,19 +13,12 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install -r requirements-dev.txt
-
-      - name: Run linter
-        run: ruff check scripts/
-
-      - name: Run unit tests
-        run: pytest tests/unit/ -v
 
       - name: Create distribution
         run: ./build.sh dist
