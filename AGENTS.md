@@ -56,6 +56,26 @@ Commands that feel like native debugger features, not bolted-on scripts. Output 
 | Development reload | `oreload` in LLDB session |
 | Install locally | `./install.py` |
 
+---
+
+## CRITICAL: Git Commit Messages
+
+**NEVER include any AI/agent identifiers in commit messages.** This applies to ALL commits, especially releases.
+
+Forbidden in commit messages:
+- "Claude", "Anthropic", "AI", "LLM", "Codex", "GPT", "OpenAI", "Gemini", "Copilot"
+- "generated", "automated", "assisted by", "with help from"
+- Co-Authored-By headers mentioning AI
+- "Generated with [tool name]" footers
+- Any emoji
+
+Write commit messages as a human developer would:
+- Focus on WHAT changed and WHY
+- Use conventional commit format (feat:, fix:, refactor:, etc.)
+- Keep messages concise and professional
+
+**This rule is absolute and applies to every commit including releases and version bumps.**
+
 ## Project Structure
 
 ```
