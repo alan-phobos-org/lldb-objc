@@ -288,14 +288,18 @@ osbx [options] [path_prefix]
 
 Options:
   --quick, -q       Test only most common paths (~20 paths)
-  --thorough, -t    Enumerate subdirectories of writable paths
+  --thorough, -t    Enumerate subdirectories of writable paths (depth-limited)
   --full, -f        Full recursive scan (very slow, use with caution)
   --sandbox-only    Use sandbox_check() instead of actual access test
   --output FILE     Write results to file instead of stdout
   --verbose, -v     Show all paths tested, not just writable ones
   --json            Output in JSON format for scripting
   --filter PATTERN  Only test paths matching glob/regex pattern (e.g., "/var/**", ".*Library.*")
+  --ignore PATTERN  Skip paths matching glob/regex pattern (e.g., "/System/**", ".*node_modules.*")
   --log FILE        Write detailed per-path check log to file (path, result, reason)
+  --max-paths N     Stop after testing N paths (default: unlimited for quick/default, 10000 for thorough, 50000 for full)
+  --max-depth N     Maximum directory depth for --thorough/--full (default: 3 for thorough, 10 for full)
+  --no-progress     Disable progress indicator (useful for scripting)
 
 Arguments:
   path_prefix       Only test paths starting with this prefix (e.g., /var)
@@ -308,8 +312,10 @@ Examples:
   osbx --output writable.txt --json  # Save JSON results
   osbx --filter "/tmp/**"   # Only test paths under /tmp
   osbx --filter ".*Caches.*"  # Only test paths containing "Caches"
+  osbx --ignore "/System/**" --ignore ".*\.app/.*"  # Skip system and app bundles
   osbx --log scan.log       # Save detailed check log for debugging
   osbx --log scan.log --filter "/var/**" --thorough  # Filtered thorough scan with logging
+  osbx --full --max-paths 100000 --ignore "/System/**"  # Full scan with limits
 ```
 
 ### Filter Option (`--filter`)
@@ -323,6 +329,51 @@ The `--filter` option restricts scanning to a subset of paths, useful for:
 - Glob patterns: `/var/**`, `/tmp/*`, `~/Library/Caches/*`
 - Regex patterns: `.*Library.*`, `^/var/mobile/.*`
 - Multiple filters: `--filter "/tmp/**" --filter "/var/tmp/**"` (OR logic)
+
+### Ignore Option (`--ignore`)
+
+The `--ignore` option excludes paths from scanning, useful for:
+- Skipping known-uninteresting large directories (huge speed benefit)
+- Avoiding system paths that will always be denied
+- Excluding app bundles and frameworks (often 100K+ files)
+
+**Common ignore patterns for speed:**
+```bash
+# Skip system directories (always denied, massive)
+--ignore "/System/**"
+--ignore "/usr/**"
+--ignore "/bin/**"
+--ignore "/sbin/**"
+
+# Skip application bundles (read-only, deeply nested)
+--ignore "*.app/*"
+--ignore "*.framework/*"
+
+# Skip developer tool caches
+--ignore "*node_modules*"
+--ignore "*DerivedData*"
+--ignore "*.git/*"
+
+# Skip Xcode/iOS build artifacts
+--ignore "*Build/Intermediates*"
+--ignore "*ModuleCache*"
+```
+
+**Default ignore list** (always applied unless `--no-default-ignore`):
+```python
+DEFAULT_IGNORE_PATTERNS = [
+    "/System/**",           # macOS system (SIP protected, ~500K files)
+    "/usr/**",              # Unix system (SIP protected)
+    "/bin/**",              # System binaries
+    "/sbin/**",             # System binaries
+    "*.app/Contents/*",     # Inside app bundles (read-only)
+    "*.framework/*",        # Inside frameworks (read-only)
+    "/Library/Developer/**", # Xcode caches
+    "*/.git/*",             # Git internals
+    "*/node_modules/*",     # NPM packages
+    "/cores/**",            # Core dumps
+]
+```
 
 ```python
 import fnmatch
@@ -344,6 +395,18 @@ def matches_filter(path: str, filters: List[str]) -> bool:
         except re.error:
             pass  # Invalid regex, skip
 
+    return False
+
+def should_skip_path(path: str, ignore_patterns: List[str]) -> bool:
+    """Check if path should be skipped based on ignore patterns."""
+    for pattern in ignore_patterns:
+        if fnmatch.fnmatch(path, pattern):
+            return True
+        try:
+            if re.search(pattern, path):
+                return True
+        except re.error:
+            pass
     return False
 ```
 
@@ -947,25 +1010,124 @@ When `contentsOfDirectoryAtPath:error:` fails, handle gracefully:
 - Testing any hardlink tests the underlying file
 - No special handling needed (same behavior as regular files)
 
+### Path Deduplication
+
+Symlinks can cause the same physical path to appear multiple times:
+- `/tmp` → `/private/tmp` (macOS symlink)
+- `/var` → `/private/var` (macOS symlink)
+- `~/` → `/Users/username/` (expansion)
+
+**Problem**: Without deduplication, both `/tmp/foo` and `/private/tmp/foo` would be tested separately, wasting time and producing duplicate results.
+
+**Solution**: Canonicalize all paths before testing:
+```python
+def deduplicate_paths(frame: lldb.SBFrame, paths: List[str]) -> List[str]:
+    """Remove duplicate paths after resolving symlinks."""
+    seen_canonical = set()
+    unique_paths = []
+
+    for path in paths:
+        canonical = canonicalize_path(frame, path)
+        if canonical not in seen_canonical:
+            seen_canonical.add(canonical)
+            unique_paths.append(path)  # Keep original path for output
+
+    return unique_paths
+```
+
+**Output handling**: Report the user-friendly path but note the canonical form:
+```
+/tmp/foo (→ /private/tmp/foo)    writable
+```
+
 ---
 
 ## Performance Targets
 
-| Mode | Paths Tested | Expected Time | Use Case |
-|------|--------------|---------------|----------|
-| `--quick` | ~20 | <0.1s | Quick verification |
-| Default | ~100 | <0.5s | Standard audit |
-| `--thorough` | ~500 | <2s | Security research |
-| `--full` | 10K+ | 30s+ | Complete audit (warned) |
+### Realistic Performance Analysis
+
+**Key constraint**: LLDB expression evaluation is the bottleneck. Each batch call takes ~50-100ms regardless of batch size (up to ~35 paths).
+
+| Mode | Paths Tested | Expression Calls | Expected Time | Use Case |
+|------|--------------|------------------|---------------|----------|
+| `--quick` | ~20 | 1 | <0.1s | Quick verification |
+| Default | ~100 | 3 | <0.3s | Standard audit |
+| `--thorough` | ~500-2000 | 15-60 | 1-5s | Security research |
+| `--full` (with ignores) | ~10K-50K | 300-1500 | 30s-2min | Targeted complete audit |
+| `--full` (no ignores) | 500K-1M+ | 15K-30K+ | 15-60 min | NOT RECOMMENDED |
+
+**Why full filesystem scans are impractical:**
+- Typical macOS system: 500K-1M files
+- `/System` alone: ~400K files
+- At 35 paths/batch, 50ms/call: 500K paths = ~12 minutes minimum
+- Most paths will be denied anyway (wasted time)
+
+**Recommendation**: Always use `--ignore` patterns or `--filter` with `--full`. The default ignore list eliminates ~80% of paths (mostly in `/System`).
+
+### Safety Limits (Defaults)
+
+| Mode | Max Paths | Max Depth | Rationale |
+|------|-----------|-----------|-----------|
+| `--quick` | 50 | 1 | Fast, predictable |
+| Default | 500 | 2 | Reasonable coverage |
+| `--thorough` | 10,000 | 3 | Deep but bounded |
+| `--full` | 50,000 | 10 | Practical limit |
+
+Users can override with `--max-paths` and `--max-depth`, but will see warnings:
+```
+warning: Scanning 100000+ paths may take 5+ minutes. Continue? [y/N]
+```
+
+### Progress Indicator
+
+For scans >100 paths, show progress:
+```
+Scanning... [=====>    ] 2,450 / 5,000 paths (49%) - 12 writable found - ETA: 45s
+```
+
+Progress updates every 100 paths or 2 seconds, whichever comes first.
 
 ### Optimization Strategies
 
-1. **Batch expressions**: 35 paths per call
-2. **Early termination**: Stop enumeration at depth limit
-3. **Caching**: Cache container path and temp directory
-4. **Parallel enumeration**: Not feasible in LLDB (single expression thread)
+1. **Batch expressions**: 35 paths per call (diminishing returns beyond this)
+2. **Default ignore patterns**: Skip `/System/**`, `*.app/*`, etc. (~80% reduction)
+3. **Early pruning**: Don't enumerate children of non-readable directories
+4. **Depth limiting**: Stop recursion at configurable depth
+5. **Max-paths limit**: Hard stop to prevent runaway scans
+6. **Path deduplication**: Canonicalize paths to avoid testing symlink aliases twice
+7. **Caching**: Cache container path, temp directory, and platform detection
+8. **Parallel enumeration**: Not feasible in LLDB (single expression thread)
 
----
+### Interruption Handling
+
+Support Ctrl+C graceful termination:
+```python
+import signal
+
+class ScanState:
+    """Track scan state for graceful interruption."""
+    def __init__(self):
+        self.interrupted = False
+        self.results_so_far = []
+
+    def handle_interrupt(self, signum, frame):
+        self.interrupted = True
+        print("\nInterrupted. Saving partial results...")
+
+# In main scan loop:
+if scan_state.interrupted:
+    break  # Exit loop, still output partial results
+```
+
+Output on interrupt:
+```
+Interrupted after 2,450 paths (scan incomplete)
+
+Writable Paths (12 found so far):
+  ...
+
+warning: Results are incomplete. Re-run without interruption for full scan.
+```
 
 ---
 
@@ -1459,8 +1621,6 @@ osbx --entitlements
 
 ---
 
----
-
 ## Additional Edge Cases
 
 ### Race Conditions
@@ -1527,6 +1687,66 @@ def is_jailbroken(frame: lldb.SBFrame) -> bool:
             return True
     return False
 ```
+
+### Firmlinks (macOS 10.15+)
+macOS Catalina introduced firmlinks for the read-only system volume:
+- `/System/Volumes/Data` is the writable data volume
+- Firmlinks make paths like `/Users` appear at root but actually live on data volume
+- `isWritableFileAtPath:` handles this correctly
+- Be aware that canonical paths may differ from displayed paths
+
+### APFS Snapshots
+- Snapshots are read-only, but appear in normal filesystem hierarchy
+- Paths under `/.MobileBackups/` or similar may exist but not be writable
+- NSFileManager correctly reports these as non-writable
+
+### Resource Forks and Extended Attributes
+- Classic Mac resource forks (`file/..namedfork/rsrc`) are rarely used
+- Extended attributes (xattrs) have separate permissions
+- `isWritableFileAtPath:` tests data fork only
+- For complete audit, would need `setxattr()` testing (not in scope)
+
+### Memory-Mapped Files
+- Files currently mmap'd with `PROT_WRITE` by another process
+- May show as writable but writes could fail or cause issues
+- Not a sandbox concern, but relevant for complete audit
+
+### Quarantine Attribute
+- Downloaded files may have `com.apple.quarantine` xattr
+- Doesn't affect writability, but affects executability
+- Mentioned for completeness; not tested by osbx
+
+---
+
+## Potential Failure Modes
+
+### What Could Go Wrong
+
+| Failure Mode | Impact | Mitigation |
+|--------------|--------|------------|
+| LLDB expression timeout | Scan hangs or crashes | Set explicit timeout, reduce batch size |
+| Process not stopped | Expressions fail | Check process state before scanning |
+| ObjC runtime not loaded | NSFileManager unavailable | Verify runtime, fall back to `access()` |
+| Recursive symlink loop | Infinite enumeration | Track visited inodes, max-depth limit |
+| Path with special characters | Expression parsing fails | Proper escaping, test with edge cases |
+| Very long paths (>PATH_MAX) | Buffer overflow or truncation | Validate path length before testing |
+| Disk full during --output | Output file incomplete | Write to temp file, atomic rename |
+| Target process crashes | Scan interrupted | Graceful error handling, partial results |
+| Sandbox violation flood | System log filled | Use sandbox_check with NO_REPORT |
+
+### Robustness Checklist
+
+- [ ] Handle process not running
+- [ ] Handle process running but not stopped
+- [ ] Handle expression evaluation timeout
+- [ ] Handle expression evaluation error (e.g., ObjC not loaded)
+- [ ] Handle paths with quotes, backslashes, unicode
+- [ ] Handle symlink loops (max 40 symlink follows per path)
+- [ ] Handle permission denied on enumeration
+- [ ] Handle Ctrl+C interruption gracefully
+- [ ] Validate output file path before scanning
+- [ ] Warn before long-running scans
+- [ ] Report partial results on error
 
 ---
 
