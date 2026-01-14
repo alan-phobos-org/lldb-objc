@@ -1,0 +1,40 @@
+;; permissive.sb
+;;
+;; Permissive sandbox profile for comparison testing.
+;; Allows most file operations but still blocks sensitive paths.
+;;
+;; Use with: ./osbx-standalone --profile sandbox_profiles/permissive.sb
+
+(version 1)
+
+;; Start permissive
+(allow default)
+
+;; Explicitly deny sensitive paths
+(deny file-write*
+    (subpath "/System")
+    (subpath "/usr")
+    (subpath "/bin")
+    (subpath "/sbin")
+    (subpath "/private/var/db")
+    (subpath "/private/var/root")
+    (subpath "/Library/Preferences")
+    (subpath "/Library/LaunchDaemons")
+    (subpath "/Library/LaunchAgents"))
+
+;; Deny Keychain access
+(deny file-read* file-write*
+    (subpath "/Library/Keychains")
+    (regex #"^/Users/[^/]+/Library/Keychains"))
+
+;; Deny access to other users' home directories
+(deny file-read* file-write*
+    (regex #"^/Users/(?!Shared)[^/]+")
+    (subpath "/private/var/root"))
+
+;; Allow temp directories
+(allow file-read* file-write*
+    (subpath "/tmp")
+    (subpath "/private/tmp")
+    (subpath "/var/tmp")
+    (subpath "/var/folders"))

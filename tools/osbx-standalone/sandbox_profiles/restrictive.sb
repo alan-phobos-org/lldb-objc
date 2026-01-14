@@ -1,0 +1,34 @@
+;; restrictive.sb
+;;
+;; Highly restrictive sandbox profile for testing.
+;; Only allows reading and the bare minimum for execution.
+;;
+;; Use with: ./osbx-standalone --profile sandbox_profiles/restrictive.sb
+
+(version 1)
+
+;; Deny everything by default
+(deny default)
+
+;; Allow the process to execute
+(allow process-exec*)
+(allow process-fork)
+
+;; Allow reading only essential system libraries
+(allow file-read*
+    (subpath "/usr/lib")
+    (subpath "/System/Library/Frameworks")
+    (subpath "/System/Library/PrivateFrameworks")
+    (literal "/dev/null")
+    (literal "/dev/urandom"))
+
+;; Only allow writing to /dev/null
+(allow file-write*
+    (literal "/dev/null"))
+
+;; Minimal system calls
+(allow sysctl-read)
+(allow mach-lookup (global-name "com.apple.system.logger"))
+
+;; Everything else is denied - this is a very restrictive profile
+;; for testing what happens when almost nothing is allowed

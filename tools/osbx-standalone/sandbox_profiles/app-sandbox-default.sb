@@ -1,0 +1,61 @@
+;; app-sandbox-default.sb
+;;
+;; Default App Sandbox profile for macOS applications.
+;; This mimics the basic sandbox applied to Mac App Store apps.
+;;
+;; Use with: ./osbx-standalone --profile sandbox_profiles/app-sandbox-default.sb
+
+(version 1)
+
+;; Start with deny-all
+(deny default)
+
+;; Allow basic process operations
+(allow process-exec*)
+(allow process-fork)
+(allow signal (target self))
+
+;; Allow reading system files
+(allow file-read*
+    (subpath "/System")
+    (subpath "/usr/lib")
+    (subpath "/usr/share")
+    (subpath "/Library/Frameworks")
+    (subpath "/Library/Managed Preferences")
+    (subpath "/private/var/db/mds")
+    (literal "/dev/null")
+    (literal "/dev/zero")
+    (literal "/dev/random")
+    (literal "/dev/urandom"))
+
+;; Allow writing to specific device files
+(allow file-write*
+    (literal "/dev/null")
+    (literal "/dev/zero"))
+
+;; Allow reading user's home directory (limited)
+(allow file-read*
+    (subpath (param "HOME")))
+
+;; Container: Allow full access to app's container
+;; In real sandboxed apps, this would be the container path
+;; For testing, we use a temp directory
+(allow file-read* file-write*
+    (subpath "/tmp/osbx-test-container"))
+
+;; Deny dangerous paths explicitly (for clarity)
+(deny file-write*
+    (subpath "/System")
+    (subpath "/usr")
+    (subpath "/bin")
+    (subpath "/sbin")
+    (subpath "/Library")
+    (subpath "/Applications"))
+
+;; Allow necessary system calls
+(allow sysctl-read)
+(allow mach-lookup)
+(allow iokit-open)
+
+;; Allow network lookups (DNS, etc.) but not connections
+(allow network-outbound (literal "/private/var/run/mDNSResponder"))

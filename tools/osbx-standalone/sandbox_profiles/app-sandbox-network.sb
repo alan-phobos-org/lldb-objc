@@ -1,0 +1,53 @@
+;; app-sandbox-network.sb
+;;
+;; App Sandbox profile with network access enabled.
+;; Mimics apps with com.apple.security.network.client entitlement.
+;;
+;; Use with: ./osbx-standalone --profile sandbox_profiles/app-sandbox-network.sb
+
+(version 1)
+
+;; Start with deny-all
+(deny default)
+
+;; Allow basic process operations
+(allow process-exec*)
+(allow process-fork)
+(allow signal (target self))
+
+;; Allow reading system files
+(allow file-read*
+    (subpath "/System")
+    (subpath "/usr/lib")
+    (subpath "/usr/share")
+    (subpath "/Library/Frameworks")
+    (subpath "/private/var/db/mds")
+    (literal "/dev/null")
+    (literal "/dev/zero")
+    (literal "/dev/random")
+    (literal "/dev/urandom"))
+
+;; Allow writing to device files
+(allow file-write*
+    (literal "/dev/null")
+    (literal "/dev/zero"))
+
+;; Container access
+(allow file-read* file-write*
+    (subpath "/tmp/osbx-test-container"))
+
+;; Allow system calls
+(allow sysctl-read)
+(allow mach-lookup)
+(allow iokit-open)
+
+;; Network access (client - outbound connections)
+(allow network-outbound)
+(allow network-inbound (local tcp))
+
+;; Allow resolving network addresses
+(allow file-read*
+    (literal "/etc/hosts")
+    (literal "/etc/resolv.conf")
+    (literal "/etc/services")
+    (literal "/etc/protocols"))
