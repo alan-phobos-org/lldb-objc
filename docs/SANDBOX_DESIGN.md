@@ -1643,307 +1643,257 @@ def test_osbx_container_resolution(lldb_session):
 
 ## iOS Remote Debugging Considerations
 
-When debugging iOS apps remotely via USB/network, the testing infrastructure faces unique challenges that differ significantly from macOS.
+> **Note**: iOS remote debugging support is **out of scope** for the initial implementation.
+> The `osbx` command focuses on macOS debugging scenarios. iOS support may be added in
+> a future version.
 
-### The Folder Structure Problem
+---
 
-**On macOS testing:**
-- Test harness can create directories anywhere (`/tmp/osbx_test_writable/`, etc.)
-- Can apply sandbox profiles via `sandbox-exec` or `sandbox_init_with_parameters()`
-- Full filesystem control for predictable test setup
+## Alternative: Standalone Sandbox Scanner Binary
 
-**On iOS remote debugging:**
-- **No shell access**: Cannot run `mkdir` or create directories on the device
-- **No `sandbox-exec`**: This utility doesn't exist on iOS
-- **App-scoped filesystem**: Only the debugged app's container is accessible
-- **No runtime sandbox APIs**: `sandbox_init()` is restricted to Apple platform binaries
-- **Entitlement-based sandbox**: iOS apps get sandbox policy from kernel based on embedded entitlements, not runtime configuration
+Instead of relying on LLDB expression evaluation (with its overhead and complexity), we can build a standalone C binary that:
 
-### iOS Testing Strategies
+1. Opts into a sandbox profile matching the target app
+2. Runs directly with no debugger overhead
+3. Outputs results to stdout or a file
 
-#### Strategy 1: In-Process Test Directory Creation (Recommended for CI)
+This approach eliminates LLDB entirely for sandbox scanning.
 
-Create test directories within the app's container using injected LLDB expressions:
+### Concept
 
-```objective-c
-// Injected via LLDB to set up test structure within app container
-(NSDictionary *)^{
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSString *container = NSHomeDirectory();
-    NSString *testDir = [container stringByAppendingPathComponent:@"osbx_test"];
-    NSError *error = nil;
-
-    // Create writable test directory
-    NSString *writable = [testDir stringByAppendingPathComponent:@"writable"];
-    [fm createDirectoryAtPath:writable
-  withIntermediateDirectories:YES
-                   attributes:nil
-                        error:&error];
-
-    // Create read-only directory (set permissions after creation)
-    NSString *readonly = [testDir stringByAppendingPathComponent:@"readonly"];
-    [fm createDirectoryAtPath:readonly
-  withIntermediateDirectories:YES
-                   attributes:nil
-                        error:nil];
-
-    // Make readonly directory actually read-only
-    [fm setAttributes:@{NSFilePosixPermissions: @0555}
-         ofItemAtPath:readonly
-                error:nil];
-
-    return @{
-        @"testDir": testDir,
-        @"writable": writable,
-        @"readonly": readonly,
-        @"error": error ? [error localizedDescription] : [NSNull null]
-    };
-}()
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    osbx-standalone                               │
+│  A native binary that applies a sandbox profile and scans paths │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+        ┌───────────────────────┼───────────────────────┐
+        │                       │                       │
+        ▼                       ▼                       ▼
+┌───────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│ Option A:     │     │ Option B:       │     │ Option C:       │
+│ sandbox_init  │     │ Match app       │     │ Run as target   │
+│ with profile  │     │ entitlements    │     │ app's child     │
+└───────────────┘     └─────────────────┘     └─────────────────┘
 ```
 
-**Cleanup after test:**
-```objective-c
-// Remove test directories
-(BOOL)^{
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSString *testDir = [NSHomeDirectory() stringByAppendingPathComponent:@"osbx_test"];
+### Option A: `sandbox_init()` with SBPL Profile
 
-    // Restore permissions so we can delete
-    NSString *readonly = [testDir stringByAppendingPathComponent:@"readonly"];
-    [fm setAttributes:@{NSFilePosixPermissions: @0755}
-         ofItemAtPath:readonly
-                error:nil];
-
-    return [fm removeItemAtPath:testDir error:nil];
-}()
-```
-
-**Pros:**
-- Works on iOS device via remote debugging
-- No external setup required
-- Self-contained within debugged process
-- Tests actual iOS sandbox behavior
-
-**Cons:**
-- Limited to testing within app container
-- Cannot test paths outside sandbox (e.g., `/var/mobile/Library/SMS/`)
-- Test cleanup could fail on crash
-
-#### Strategy 2: Dedicated iOS Test App
-
-Build a dedicated iOS app with specific entitlements for predictable test results:
-
-```xml
-<!-- TestApp.entitlements -->
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>com.apple.security.application-groups</key>
-    <array>
-        <string>group.com.lldb-objc.osbx-test</string>
-    </array>
-</dict>
-</plist>
-```
-
-**Known writable paths with this entitlement:**
-- `{{CONTAINER}}/Documents/` - always writable
-- `{{CONTAINER}}/Library/` - always writable
-- `{{CONTAINER}}/tmp/` - always writable
-- `/var/mobile/Containers/Shared/AppGroup/group.com.lldb-objc.osbx-test/` - writable
-
-**Known denied paths:**
-- `/var/mobile/Library/SMS/` - sandbox denied
-- `/System/` - SIP protected
-- `/private/var/Keychains/` - sandbox denied
-
-**Pros:**
-- Real iOS sandbox behavior
-- Predictable test results based on known entitlements
-- Tests actual production scenarios
-
-**Cons:**
-- Requires deploying app to device (code signing, provisioning profile)
-- More complex CI setup
-- Needs device farm or local iOS device
-
-#### Strategy 3: Expected Behavior Validation (No Setup Required)
-
-For iOS, validate against expected behavior without creating test directories:
-
-```python
-# iOS expected results (no setup required)
-IOS_EXPECTED_WRITABLE = [
-    "{{CONTAINER}}/Documents",
-    "{{CONTAINER}}/Library",
-    "{{CONTAINER}}/tmp",
-    "/dev/null",
-    "/dev/zero",
-]
-
-IOS_EXPECTED_DENIED = [
-    "/System",
-    "/usr",
-    "/bin",
-    "/var/mobile/Library/SMS",
-    "/private/var/Keychains",
-]
-
-def test_ios_expected_results(session, container):
-    """Verify iOS sandbox matches expected behavior."""
-    results = session.run_command("osbx --json")
-    data = json.loads(results)
-
-    writable = {p["path"] for p in data["writable_paths"]}
-
-    # Container paths should be writable
-    for expected in IOS_EXPECTED_WRITABLE:
-        path = expected.replace("{{CONTAINER}}", container)
-        assert path in writable or any(w.startswith(path) for w in writable), \
-            f"Expected {path} to be writable"
-
-    # System paths should be denied (not in writable list)
-    for denied in IOS_EXPECTED_DENIED:
-        assert denied not in writable, f"Expected {denied} to be denied"
-```
-
-**Pros:**
-- No setup required
-- Works on any iOS device
-- Tests real-world sandbox behavior
-
-**Cons:**
-- Cannot test edge cases or custom scenarios
-- App Group paths vary by app
-
-### Alternative: Fast C-Based Sandbox Testing
-
-Instead of relying on NSFileManager (Objective-C overhead), inject fast C code for testing:
-
-#### Option A: Direct `access()` syscall
+Build a binary that loads a custom sandbox profile at runtime:
 
 ```c
-// Minimal overhead writability check
-(int)access("/path/to/test", W_OK)
-// Returns 0 if writable, -1 if not
-```
+// osbx-standalone.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sandbox.h>
 
-**Pros:**
-- Very fast (no ObjC runtime)
-- Available on both macOS and iOS
-- Direct kernel interaction
+// Load sandbox profile from file or embedded string
+int apply_sandbox_profile(const char *profile_path) {
+    char *profile = NULL;
 
-**Cons:**
-- Tests POSIX permissions, may miss some sandbox nuances
-- Returns -1 for both "doesn't exist" and "not writable"
+    if (profile_path) {
+        // Read profile from file
+        FILE *f = fopen(profile_path, "r");
+        if (!f) return -1;
 
-#### Option B: `sandbox_check()` Private API
+        fseek(f, 0, SEEK_END);
+        long len = ftell(f);
+        fseek(f, 0, SEEK_SET);
 
-```c
-// Pure sandbox policy check without filesystem access
-// Signature: int sandbox_check(pid_t pid, const char *operation, int type, ...)
-// SANDBOX_FILTER_PATH = 1
-// SANDBOX_CHECK_NO_REPORT = 0x40 (suppress violation logs)
-
-(int)sandbox_check(getpid(), "file-write-data", (1 | 0x40), "/var/mobile/Library/SMS")
-// Returns 0 if sandbox allows, non-zero if denied
-```
-
-**Pros:**
-- Tests sandbox policy directly, no side effects
-- No actual filesystem access attempted
-- `SANDBOX_CHECK_NO_REPORT` suppresses violation logging
-- Works on iOS (verified available in libsystem_sandbox.dylib)
-
-**Cons:**
-- Private API, may change between OS versions
-- Only tests sandbox, not POSIX permissions
-- Need dynamic symbol lookup or direct call
-
-#### Option C: Combined Check (Recommended for `--sandbox-only` mode)
-
-```c
-// Batch sandbox check for multiple paths
-(NSArray *)^{
-    NSArray *paths = @[@"/var/mobile/Library/SMS", @"/tmp", @"/System"];
-    NSMutableArray *results = [NSMutableArray array];
-    pid_t pid = getpid();
-
-    for (NSString *path in paths) {
-        // SANDBOX_FILTER_PATH | SANDBOX_CHECK_NO_REPORT
-        int result = sandbox_check(pid, "file-write-data", (1 | 0x40), [path UTF8String]);
-        [results addObject:@{
-            @"path": path,
-            @"sandbox_allows": @(result == 0),
-            @"result_code": @(result)
-        }];
+        profile = malloc(len + 1);
+        fread(profile, 1, len, f);
+        profile[len] = '\0';
+        fclose(f);
+    } else {
+        // Use default restrictive profile
+        profile = strdup(
+            "(version 1)\n"
+            "(deny default)\n"
+            "(allow process-exec*)\n"
+            "(allow file-read*)\n"
+            "(allow sysctl-read)\n"
+        );
     }
-    return results;
-}()
+
+    char *error = NULL;
+    int ret = sandbox_init(profile, 0, &error);
+
+    if (ret != 0) {
+        fprintf(stderr, "sandbox_init failed: %s\n", error ? error : "unknown");
+        sandbox_free_error(error);
+    }
+
+    free(profile);
+    return ret;
+}
+
+// Fast writability check using access()
+int check_writable(const char *path) {
+    return access(path, W_OK) == 0;
+}
+
+// Check using sandbox_check() for sandbox-only testing
+int sandbox_allows_write(const char *path) {
+    // SANDBOX_FILTER_PATH = 1, SANDBOX_CHECK_NO_REPORT = 0x40
+    extern int sandbox_check(pid_t, const char *, int, ...);
+    return sandbox_check(getpid(), "file-write-data", 1 | 0x40, path) == 0;
+}
+
+int main(int argc, char *argv[]) {
+    const char *profile_path = NULL;
+    int sandbox_only = 0;
+    int json_output = 0;
+
+    // Parse args
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--profile") == 0 && i + 1 < argc) {
+            profile_path = argv[++i];
+        } else if (strcmp(argv[i], "--sandbox-only") == 0) {
+            sandbox_only = 1;
+        } else if (strcmp(argv[i], "--json") == 0) {
+            json_output = 1;
+        }
+    }
+
+    // Apply sandbox profile
+    if (apply_sandbox_profile(profile_path) != 0) {
+        return 1;
+    }
+
+    // Paths to test
+    const char *paths[] = {
+        "/tmp",
+        "/private/tmp",
+        "/var/tmp",
+        "/dev/null",
+        "/dev/zero",
+        "/System",
+        "/usr",
+        "/bin",
+        "/Users",
+        NULL
+    };
+
+    // Output results
+    if (json_output) printf("{\n  \"writable_paths\": [\n");
+
+    int writable_count = 0;
+    for (int i = 0; paths[i]; i++) {
+        int writable = sandbox_only
+            ? sandbox_allows_write(paths[i])
+            : check_writable(paths[i]);
+
+        if (writable) {
+            if (json_output) {
+                if (writable_count > 0) printf(",\n");
+                printf("    \"%s\"", paths[i]);
+            } else {
+                printf("WRITABLE: %s\n", paths[i]);
+            }
+            writable_count++;
+        } else if (!json_output) {
+            printf("DENIED:   %s\n", paths[i]);
+        }
+    }
+
+    if (json_output) printf("\n  ],\n  \"count\": %d\n}\n", writable_count);
+
+    return 0;
+}
 ```
 
-### iOS vs macOS Testing Matrix
+**Build:**
+```bash
+clang -o osbx-standalone osbx-standalone.c -framework Foundation
+```
 
-| Feature | macOS | iOS Device | iOS Simulator |
-|---------|-------|------------|---------------|
-| `sandbox_init()` | ✓ | ✗ (restricted) | ✗ (restricted) |
-| `sandbox_check()` | ✓ | ✓ | ✓ |
-| Create test dirs anywhere | ✓ | ✗ | ✓ (simulated fs) |
-| Create dirs in container | ✓ | ✓ | ✓ |
-| Test `/System` denied | ✓ | ✓ | ✓ |
-| Test `/var/mobile/*` | N/A | ✓ | ✓ |
-| Custom sandbox profile | ✓ | ✗ | ✗ |
-| `access(W_OK)` | ✓ | ✓ | ✓ |
-| NSFileManager | ✓ | ✓ | ✓ |
+**Usage:**
+```bash
+# Run with default restrictive sandbox
+./osbx-standalone
 
-### Recommended iOS Testing Approach
+# Run with custom profile matching target app
+./osbx-standalone --profile /path/to/app.sb
 
-1. **Unit tests** (pure Python): Run on any platform, no device needed
-2. **macOS integration tests**: Use `helloworld_sandboxed` with custom profile
-3. **iOS Simulator tests**: Create test dirs in simulator's filesystem
-4. **iOS device tests**: Use Strategy 1 (in-process test dirs) + Strategy 3 (expected behavior)
+# Test sandbox policy only (no actual filesystem access)
+./osbx-standalone --sandbox-only --json
+```
 
-### Implementation for iOS Test Fixture
+### Option B: Match Target App's Entitlements
+
+Sign the scanner binary with the same entitlements as the target app:
+
+```bash
+# Extract entitlements from target app
+codesign -d --entitlements - /path/to/App.app/Contents/MacOS/App > app.entitlements
+
+# Sign scanner with matching entitlements
+codesign -s "Developer ID" --entitlements app.entitlements osbx-standalone
+```
+
+The kernel will apply the same sandbox rules based on entitlements.
+
+**Limitation**: This requires access to a valid signing identity that matches the original app's team/distribution method.
+
+### Option C: Run as Child of Sandboxed Process
+
+Use LLDB to spawn the scanner as a child process of the sandboxed app:
 
 ```python
-# tests/conftest.py - iOS-aware fixture
+# From LLDB, fork and exec the scanner
+expr (int)system("/path/to/osbx-standalone --json > /tmp/scan-results.json")
+```
 
-@pytest.fixture
-def ios_test_dirs(lldb_session):
-    """Create test directories within iOS app container."""
-    frame = lldb_session.get_frame()
+The child process inherits the parent's sandbox. This combines LLDB attachment (for sandbox context) with native binary speed (for scanning).
 
-    # Create test structure via injected expression
-    setup_expr = '''
-    (NSDictionary *)^{
-        NSFileManager *fm = [NSFileManager defaultManager];
-        NSString *base = [NSHomeDirectory() stringByAppendingPathComponent:@"osbx_test"];
-        NSString *writable = [base stringByAppendingPathComponent:@"writable"];
-        NSString *readonly = [base stringByAppendingPathComponent:@"readonly"];
+### Performance Comparison
 
-        [fm createDirectoryAtPath:writable withIntermediateDirectories:YES attributes:nil error:nil];
-        [fm createDirectoryAtPath:readonly withIntermediateDirectories:YES attributes:nil error:nil];
-        [fm setAttributes:@{NSFilePosixPermissions: @0555} ofItemAtPath:readonly error:nil];
+| Approach | Paths/sec | Overhead | Complexity |
+|----------|-----------|----------|------------|
+| LLDB + NSFileManager | ~300 | High (expr eval) | Low |
+| LLDB + C expression | ~1000 | Medium (expr eval) | Medium |
+| Standalone binary | ~50,000+ | None | Medium (signing) |
+| Child process spawn | ~50,000+ | One-time fork | Low |
 
-        return @{@"base": base, @"writable": writable, @"readonly": readonly};
-    }()
-    '''
+### Standalone Binary Advantages
 
-    result = frame.EvaluateExpression(setup_expr)
-    dirs = parse_nsdictionary(result)
+1. **No LLDB overhead**: Direct syscalls, no expression compilation
+2. **Batch everything**: Single process scans thousands of paths
+3. **Portable output**: JSON to stdout, easy to parse
+4. **Reusable**: Run multiple times with different profiles
+5. **Debuggable**: Can attach LLDB to the scanner itself if needed
 
-    yield dirs
+### Standalone Binary Limitations
 
-    # Cleanup
-    cleanup_expr = f'''
-    (BOOL)^{{
-        NSFileManager *fm = [NSFileManager defaultManager];
-        [fm setAttributes:@{{NSFilePosixPermissions: @0755}} ofItemAtPath:@"{dirs['readonly']}" error:nil];
-        return [fm removeItemAtPath:@"{dirs['base']}" error:nil];
-    }}()
-    '''
-    frame.EvaluateExpression(cleanup_expr)
+1. **Signing required**: Must be signed to run on modern macOS
+2. **Profile matching**: Need to extract/recreate target app's sandbox profile
+3. **Not in-process**: Can't access target app's memory or state
+4. **macOS only**: `sandbox_init()` not available on iOS
+
+### Recommended Use Cases
+
+| Scenario | Recommended Approach |
+|----------|---------------------|
+| Quick audit of running app | LLDB `osbx` command |
+| Deep scan with thousands of paths | Standalone binary |
+| CI/automated testing | Standalone binary |
+| Security research (profile analysis) | Standalone with `--sandbox-only` |
+| One-off debugging | LLDB `osbx` command |
+
+### Implementation Location
+
+If implemented, the standalone binary would live at:
+```
+tools/
+└── osbx-standalone/
+    ├── main.c              # Scanner implementation
+    ├── sandbox_profiles/   # Sample .sb profiles
+    │   ├── app-sandbox-default.sb
+    │   └── app-sandbox-network.sb
+    ├── Makefile
+    └── README.md
 ```
 
 ---
