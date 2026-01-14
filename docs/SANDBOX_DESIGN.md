@@ -33,7 +33,14 @@ Currently, this requires manual testing or external tools that don't integrate w
 ### Apple's `sbtool` (Private)
 - Command: `sbtool <pid> file /path`
 - Checks if a specific path is accessible
+- Also supports: `sbtool <pid> mach` (Mach ports), `sbtool <pid> inspect` (profile explanation), `sbtool <pid> all`
 - **Limitation**: Requires root, checks single paths, not available on iOS
+
+### sb_validator (Open Source)
+- URL: https://github.com/Karmaz95/sb_validator
+- Command-line utility that validates sandbox operations via `sandbox_check()` kernel API
+- Supports multiple filter types (PATH, GLOBAL_NAME, APPLEEVENT_DESTINATION, etc.)
+- **Limitation**: Requires manual path specification, no bulk enumeration
 
 ### Objection (Frida-based)
 - URL: https://github.com/sensepost/objection
@@ -122,18 +129,47 @@ access("/path", W_OK) == 0
 #### Option C: `sandbox_check()` Private API
 
 ```c
+// Function signature (from libsystem_sandbox.dylib):
+int sandbox_check(pid_t pid, const char *operation, enum sandbox_filter_type type, ...);
+
+// Filter types:
+enum sandbox_filter_type {
+    SANDBOX_FILTER_NONE = 0,
+    SANDBOX_FILTER_PATH = 1,
+    SANDBOX_FILTER_GLOBAL_NAME = 2,      // Mach service names
+    SANDBOX_FILTER_LOCAL_NAME = 3,
+    SANDBOX_FILTER_APPLEEVENT_DESTINATION = 4,
+    SANDBOX_FILTER_RIGHT_NAME = 5,
+    SANDBOX_FILTER_POSIX_IPC_NAME = 17,
+    SANDBOX_FILTER_NVRAM_VARIABLE = 15,
+};
+
+// Usage example:
 sandbox_check(getpid(), "file-write-data", SANDBOX_FILTER_PATH, path)
+
+// Suppress sandbox violation logging:
+sandbox_check(getpid(), "file-write-data",
+              SANDBOX_FILTER_PATH | SANDBOX_CHECK_NO_REPORT, path)
 ```
+
+**Key operations for file access:**
+- `file-read-data` - Read file contents
+- `file-write-data` - Write file contents
+- `file-read-metadata` - Read file attributes
+- `file-write-create` - Create new files
+- `file-write-unlink` - Delete files
 
 **Pros:**
 - Tests sandbox policy directly without side effects
 - No actual filesystem access attempted
-- Can use `SANDBOX_CHECK_NO_REPORT` to suppress logs
+- Can use `SANDBOX_CHECK_NO_REPORT` flag to suppress violation logs
+- Returns 0 if allowed, non-zero if denied
 
 **Cons:**
 - Private API, may change between OS versions
-- Only tests sandbox, not POSIX permissions
-- Requires linking against private framework
+- Only tests sandbox, not POSIX permissions or ACLs
+- `SANDBOX_CHECK_NO_REPORT` is a weak import (may not exist on all versions)
+- Requires dynamic lookup via `dlsym()` or expression evaluation
 
 #### Recommendation
 
@@ -275,12 +311,16 @@ Examples:
 ```python
 # scripts/objc_sandbox.py
 
+from typing import Optional, List, Dict, Tuple
+
 def get_container_path(frame: lldb.SBFrame) -> Optional[str]:
     """Get the app's sandbox container path."""
     expr = '(NSString *)NSHomeDirectory()'
     result = frame.EvaluateExpression(expr)
     if result.GetError().Success():
-        return result.GetSummary().strip('"')
+        summary = result.GetSummary()
+        if summary:
+            return summary.strip('"@')
     return None
 
 def get_temp_directory(frame: lldb.SBFrame) -> Optional[str]:
@@ -288,7 +328,9 @@ def get_temp_directory(frame: lldb.SBFrame) -> Optional[str]:
     expr = '(NSString *)NSTemporaryDirectory()'
     result = frame.EvaluateExpression(expr)
     if result.GetError().Success():
-        return result.GetSummary().strip('"')
+        summary = result.GetSummary()
+        if summary:
+            return summary.strip('"@')
     return None
 
 def batch_check_writable(
@@ -305,8 +347,10 @@ def batch_check_writable(
     for i in range(0, len(paths), batch_size):
         batch = paths[i:i + batch_size]
 
-        # Build batched expression
-        path_array = ', '.join(f'@"{p}"' for p in batch)
+        # Escape paths for Objective-C string literals
+        escaped_paths = [p.replace('\\', '\\\\').replace('"', '\\"') for p in batch]
+        path_array = ', '.join(f'@"{p}"' for p in escaped_paths)
+
         expr = f'''
         (NSArray *)^{{
             NSFileManager *fm = [NSFileManager defaultManager];
@@ -321,7 +365,60 @@ def batch_check_writable(
         '''
 
         result = frame.EvaluateExpression(expr)
-        # Parse results...
+        if result.GetError().Success():
+            # Parse NSArray of NSNumber(BOOL) results
+            count = result.GetNumChildren()
+            for j in range(min(count, len(batch))):
+                child = result.GetChildAtIndex(j)
+                is_writable = child.GetValueAsUnsigned() != 0
+                results[batch[j]] = is_writable
+
+    return results
+
+def batch_sandbox_check(
+    frame: lldb.SBFrame,
+    paths: List[str],
+    operation: str = "file-write-data",
+    batch_size: int = 35,
+    no_report: bool = True
+) -> Dict[str, bool]:
+    """
+    Check sandbox policy for paths using sandbox_check() API.
+    Returns dict mapping path -> is_allowed (True if sandbox allows).
+
+    Note: This only checks sandbox policy, NOT POSIX permissions.
+    """
+    results = {}
+    filter_type = "1"  # SANDBOX_FILTER_PATH
+    if no_report:
+        filter_type = "(1 | 0x40)"  # SANDBOX_FILTER_PATH | SANDBOX_CHECK_NO_REPORT
+
+    for i in range(0, len(paths), batch_size):
+        batch = paths[i:i + batch_size]
+
+        escaped_paths = [p.replace('\\', '\\\\').replace('"', '\\"') for p in batch]
+        path_array = ', '.join(f'@"{p}"' for p in escaped_paths)
+
+        expr = f'''
+        (NSArray *)^{{
+            NSArray *paths = @[{path_array}];
+            NSMutableArray *results = [NSMutableArray array];
+            pid_t pid = getpid();
+            for (NSString *path in paths) {{
+                int result = sandbox_check(pid, "{operation}", {filter_type}, [path UTF8String]);
+                [results addObject:@(result == 0)];  // 0 = allowed
+            }}
+            return results;
+        }}()
+        '''
+
+        result = frame.EvaluateExpression(expr)
+        if result.GetError().Success():
+            count = result.GetNumChildren()
+            for j in range(min(count, len(batch))):
+                child = result.GetChildAtIndex(j)
+                is_allowed = child.GetValueAsUnsigned() != 0
+                results[batch[j]] = is_allowed
 
     return results
 
@@ -329,26 +426,81 @@ def enumerate_directory(
     frame: lldb.SBFrame,
     path: str,
     max_entries: int = 100
-) -> List[str]:
+) -> Tuple[List[str], Optional[int]]:
     """
     Enumerate contents of a directory (shallow).
-    Returns list of full paths.
+    Returns (list of full paths, error_code or None).
     """
+    escaped_path = path.replace('\\', '\\\\').replace('"', '\\"')
+
     expr = f'''
-    (NSArray *)^{{
+    (NSDictionary *)^{{
         NSFileManager *fm = [NSFileManager defaultManager];
         NSError *error = nil;
-        NSArray *contents = [fm contentsOfDirectoryAtPath:@"{path}" error:&error];
-        if (error) return @[];
-        NSMutableArray *paths = [NSMutableArray array];
-        NSUInteger limit = MIN(contents.count, {max_entries});
-        for (NSUInteger i = 0; i < limit; i++) {{
-            [paths addObject:[NSString stringWithFormat:@"{path}/%@", contents[i]]];
+        NSArray *contents = [fm contentsOfDirectoryAtPath:@"{escaped_path}" error:&error];
+        if (error) {{
+            return @{{@"error": @([error code])}};
         }}
-        return paths;
+        NSMutableArray *paths = [NSMutableArray array];
+        NSUInteger limit = MIN(contents.count, (NSUInteger){max_entries});
+        for (NSUInteger i = 0; i < limit; i++) {{
+            NSString *fullPath = [@"{escaped_path}" stringByAppendingPathComponent:contents[i]];
+            [paths addObject:fullPath];
+        }}
+        return @{{@"paths": paths, @"total": @(contents.count)}};
     }}()
     '''
-    # Execute and parse...
+
+    result = frame.EvaluateExpression(expr)
+    if result.GetError().Success():
+        # Parse dictionary result
+        error_child = result.GetChildMemberWithName("error")
+        if error_child.IsValid():
+            return [], error_child.GetValueAsSigned()
+
+        paths_child = result.GetChildMemberWithName("paths")
+        if paths_child.IsValid():
+            paths = []
+            for i in range(paths_child.GetNumChildren()):
+                child = paths_child.GetChildAtIndex(i)
+                path_str = child.GetSummary()
+                if path_str:
+                    paths.append(path_str.strip('"@'))
+            return paths, None
+
+    return [], -1  # Unknown error
+
+def check_path_type(frame: lldb.SBFrame, path: str) -> str:
+    """
+    Determine if path is file, directory, symlink, or special.
+    Returns: "file", "directory", "symlink", "device", "socket", "fifo", or "unknown"
+    """
+    escaped_path = path.replace('\\', '\\\\').replace('"', '\\"')
+
+    expr = f'''
+    (NSString *)^{{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSDictionary *attrs = [fm attributesOfItemAtPath:@"{escaped_path}" error:nil];
+        return attrs[NSFileType] ?: @"unknown";
+    }}()
+    '''
+
+    result = frame.EvaluateExpression(expr)
+    if result.GetError().Success():
+        type_str = result.GetSummary()
+        if type_str:
+            type_str = type_str.strip('"@')
+            type_map = {{
+                "NSFileTypeRegular": "file",
+                "NSFileTypeDirectory": "directory",
+                "NSFileTypeSymbolicLink": "symlink",
+                "NSFileTypeCharacterSpecial": "device",
+                "NSFileTypeBlockSpecial": "device",
+                "NSFileTypeSocket": "socket",
+                "NSFileTypeFIFO": "fifo",
+            }}
+            return type_map.get(type_str, "unknown")
+    return "unknown"
 ```
 
 ### Output Format
@@ -358,7 +510,10 @@ def enumerate_directory(
 Sandbox Writable Path Scan
 ══════════════════════════
 
+Platform: iOS (device)
 Container: /var/mobile/Containers/Data/Application/ABC123/
+Temp: /private/var/mobile/Containers/Data/Application/ABC123/tmp/
+Sandbox: active
 
 Writable Paths (7 found):
   /var/mobile/Containers/Data/Application/ABC123/Documents/
@@ -366,25 +521,67 @@ Writable Paths (7 found):
   /var/mobile/Containers/Data/Application/ABC123/Library/Caches/
   /var/mobile/Containers/Data/Application/ABC123/tmp/
   /private/var/mobile/Containers/Data/Application/ABC123/tmp/
-  /dev/null
-  /dev/zero
+  /dev/null (device)
+  /dev/zero (device)
+
+Non-Writable System Paths (as expected):
+  /System/                          (SIP protected)
+  /usr/bin/                         (SIP protected)
+  /var/mobile/Library/SMS/          (sandbox denied)
 
 Tested: 47 paths in 0.12s
+```
+
+**Verbose mode (`--verbose`):**
+```
+...
+Testing: /var/mobile/Containers/Data/Application/ABC123/Documents/
+  Result: writable (directory)
+Testing: /System/
+  Result: not writable (SIP protected)
+Testing: /tmp/
+  Result: writable → /private/tmp/ (symlink resolved)
+Testing: /var/mobile/Library/SMS/
+  Result: not writable (NSCocoaErrorDomain:257 - permission denied)
+...
 ```
 
 **JSON (`--json`):**
 ```json
 {
-  "container": "/var/mobile/Containers/Data/Application/ABC123/",
-  "writable_paths": [
-    "/var/mobile/Containers/Data/Application/ABC123/Documents/",
-    "/var/mobile/Containers/Data/Application/ABC123/Library/",
-    ...
-  ],
-  "tested_count": 47,
-  "duration_seconds": 0.12,
   "platform": "iOS",
-  "sandbox_active": true
+  "device_type": "device",
+  "container": "/var/mobile/Containers/Data/Application/ABC123/",
+  "temp_directory": "/private/var/mobile/Containers/Data/Application/ABC123/tmp/",
+  "sandbox_active": true,
+  "jailbroken": false,
+  "writable_paths": [
+    {
+      "path": "/var/mobile/Containers/Data/Application/ABC123/Documents/",
+      "type": "directory",
+      "note": null
+    },
+    {
+      "path": "/dev/null",
+      "type": "device",
+      "note": "special file"
+    }
+  ],
+  "denied_paths": [
+    {
+      "path": "/System/",
+      "reason": "SIP protected"
+    },
+    {
+      "path": "/var/mobile/Library/SMS/",
+      "reason": "sandbox denied"
+    }
+  ],
+  "errors": [],
+  "tested_count": 47,
+  "writable_count": 7,
+  "duration_seconds": 0.12,
+  "scan_mode": "default"
 }
 ```
 
@@ -406,12 +603,35 @@ Tested: 47 paths in 0.12s
 ```python
 MACOS_PATHS = [
     "~/Library/Containers/{bundle_id}/Data/",
+    "~/Library/Containers/{bundle_id}/Data/Documents/",
+    "~/Library/Containers/{bundle_id}/Data/Library/",
     "~/Library/Application Support/",
     "~/Library/Caches/",
-    "/private/var/folders/",  # User temp files
+    "~/Library/Preferences/",
+    "/private/var/folders/",  # User temp files (DARWIN_USER_TEMP_DIR)
     "/usr/local/",
     "/Applications/",
+    "/Library/Application Support/",
+    "~/Desktop/",
+    "~/Documents/",
+    "~/Downloads/",
 ]
+```
+
+**macOS App Sandbox entitlements affecting file access:**
+```
+com.apple.security.app-sandbox                    # Enable sandbox
+com.apple.security.files.user-selected.read-only  # Open/Save panels (read)
+com.apple.security.files.user-selected.read-write # Open/Save panels (read-write)
+com.apple.security.files.downloads.read-only      # ~/Downloads (read)
+com.apple.security.files.downloads.read-write     # ~/Downloads (read-write)
+com.apple.security.files.pictures.read-only       # ~/Pictures (read)
+com.apple.security.files.pictures.read-write      # ~/Pictures (read-write)
+com.apple.security.files.music.read-only          # ~/Music (read)
+com.apple.security.files.music.read-write         # ~/Music (read-write)
+com.apple.security.files.movies.read-only         # ~/Movies (read)
+com.apple.security.files.movies.read-write        # ~/Movies (read-write)
+com.apple.security.application-groups             # Shared App Group containers
 ```
 
 ### iOS
@@ -419,39 +639,124 @@ MACOS_PATHS = [
 | Feature | Availability |
 |---------|--------------|
 | NSFileManager | Full support |
-| sandbox_check() | Limited (platform binary only) |
+| sandbox_check() | Limited (platform binaries only) |
 | /tmp access | Container-scoped only |
 | Container paths | /var/mobile/Containers/ |
 | Jailbreak detection | May interfere |
 
+**iOS sandbox container structure:**
+```
+/var/mobile/Containers/Data/Application/{UUID}/
+├── Documents/              # User data, backed up to iCloud
+├── Library/
+│   ├── Application Support/  # App-specific data, backed up
+│   ├── Caches/              # Cached data, NOT backed up, may be purged
+│   └── Preferences/         # NSUserDefaults plist, backed up
+├── tmp/                    # Temporary files, NOT backed up, may be purged
+└── SystemData/             # System-managed data (iOS 15+)
+```
+
 **iOS-specific paths to test:**
 ```python
 IOS_PATHS = [
+    # App container
     "{{CONTAINER}}/Documents/",
     "{{CONTAINER}}/Library/",
     "{{CONTAINER}}/Library/Caches/",
+    "{{CONTAINER}}/Library/Application Support/",
+    "{{CONTAINER}}/Library/Preferences/",
     "{{CONTAINER}}/tmp/",
+
+    # Shared containers (App Groups)
+    "/var/mobile/Containers/Shared/AppGroup/{GROUP_ID}/",
+
+    # System caches (may be writable with entitlements)
     "/var/mobile/Library/Caches/",
-    "/var/mobile/Containers/Shared/AppGroup/",
+
+    # Common escape targets (should be denied)
+    "/var/mobile/Library/",
+    "/var/mobile/Media/",
+    "/private/var/mobile/Library/SMS/",
+    "/private/var/Keychains/",
 ]
+```
+
+**iOS key entitlements:**
+```
+com.apple.security.application-groups    # Shared containers between apps
+keychain-access-groups                   # Shared keychain items
+com.apple.developer.associated-domains   # Universal links, app clips
 ```
 
 ### Platform Detection
 
 ```python
 def detect_platform(frame: lldb.SBFrame) -> str:
-    """Detect iOS vs macOS from target triple."""
+    """Detect iOS vs macOS from target triple and environment."""
     target = frame.GetThread().GetProcess().GetTarget()
     triple = target.GetTriple()
 
-    if "ios" in triple or "arm64-apple-darwin" in triple:
-        # Could be iOS device or simulator
-        # Check for iOS-specific paths to confirm
+    # Check triple first
+    if "ios" in triple:
         return "iOS"
-    elif "macos" in triple or "x86_64-apple-darwin" in triple:
+    elif "macos" in triple:
         return "macOS"
+
+    # arm64-apple-darwin could be iOS device OR Apple Silicon Mac
+    # Disambiguate by checking home directory
+    home = get_container_path(frame)
+    if home:
+        if home.startswith("/var/mobile/"):
+            return "iOS"
+        elif home.startswith("/Users/"):
+            return "macOS"
+        elif "/Library/Containers/" in home:
+            return "macOS"
+
+    # Check for iOS-specific path existence
+    expr = '(BOOL)[[NSFileManager defaultManager] fileExistsAtPath:@"/var/mobile"]'
+    result = frame.EvaluateExpression(expr)
+    if result.GetValueAsUnsigned() == 1:
+        return "iOS"
+
+    return "macOS"  # Default to macOS
+
+def is_simulator(frame: lldb.SBFrame) -> bool:
+    """Detect if running in iOS Simulator (vs device)."""
+    triple = frame.GetThread().GetProcess().GetTarget().GetTriple()
+    # Simulator uses x86_64 or arm64 but with different sysroot
+    if "simulator" in triple:
+        return True
+
+    # Alternative: check for simulator-specific environment
+    expr = '(NSString *)[[NSProcessInfo processInfo] environment][@"SIMULATOR_DEVICE_NAME"]'
+    result = frame.EvaluateExpression(expr)
+    return result.GetSummary() is not None and result.GetSummary() != "nil"
+```
+
+### Detecting App Groups
+
+```python
+def get_app_group_containers(frame: lldb.SBFrame) -> List[str]:
+    """Get shared App Group container paths if available."""
+    paths = []
+
+    # On iOS/macOS, app groups are accessible via:
+    # [[NSFileManager defaultManager] containerURLForSecurityApplicationGroupIdentifier:]
+
+    # First, we need to know the app's group identifiers from entitlements
+    # This requires reading the embedded.mobileprovision or querying the process
+
+    # Fallback: enumerate known shared container locations
+    platform = detect_platform(frame)
+    if platform == "iOS":
+        base = "/var/mobile/Containers/Shared/AppGroup/"
     else:
-        return "unknown"
+        base = os.path.expanduser("~/Library/Group Containers/")
+
+    # List directories at base path
+    contents = enumerate_directory(frame, base, max_entries=50)
+    return contents
 ```
 
 ---
@@ -471,25 +776,65 @@ All standard filesystem permissions apply (no sandbox restrictions)
 Continuing with POSIX permission check...
 ```
 
+Detection method:
+```python
+def is_sandboxed(frame: lldb.SBFrame) -> bool:
+    """Check if process is running under sandbox."""
+    # Method 1: Check for sandbox container path pattern
+    home = get_container_path(frame)
+    if home and "/Library/Containers/" in home:
+        return True
+    if home and "/var/mobile/Containers/" in home:
+        return True
+
+    # Method 2: Try sandbox_check for a known-denied path
+    expr = '(int)sandbox_check(getpid(), "file-write-data", 1, "/System")'
+    result = frame.EvaluateExpression(expr)
+    # Non-zero return means sandbox denied it (process is sandboxed)
+    return result.GetValueAsSigned() != 0
+```
+
 ### Expression Evaluation Timeout
 ```
 error: Expression timed out after 30s
 hint: Try --quick mode or specify a narrower path_prefix
 ```
 
+Mitigation:
+- Set explicit timeout on `EvaluateExpression()` calls
+- Reduce batch size if timeouts occur
+- Consider `SetUnwindOnError(True)` to recover from stuck evaluations
+
 ### Permission Denied on Enumeration
-When `contentsOfDirectoryAtPath:` fails, silently skip and continue.
-Log in `--verbose` mode: `(skipped: permission denied)`
+When `contentsOfDirectoryAtPath:error:` fails, handle gracefully:
+
+| NSCocoaErrorDomain Code | Meaning | Action |
+|------------------------|---------|--------|
+| 257 (NSFileReadNoPermissionError) | Permission denied | Skip, log in verbose |
+| 260 (NSFileReadNoSuchFileError) | Path doesn't exist | Skip silently |
+| 256 (NSFileReadUnknownError) | Unknown read error | Skip, warn in verbose |
+
+**Important**: NSFileManager error messages can be misleading. Error 4 ("file doesn't exist") may indicate a missing *intermediate* directory rather than the target path. Always check `error.code`, not `localizedDescription`.
 
 ### Symbolic Links
-- Test the link path itself
-- Optionally test resolved target with `--follow-links`
-- Default: test link only (faster, avoids infinite loops)
+- `isWritableFileAtPath:` tests the **target** of the symlink, not the link itself
+- Symlink permissions (as shown by `ls -l`) are largely cosmetic on macOS - the kernel ignores them
+- Even a symlink with `lrwxrwxrwx` (777) follows target permissions
+- Edge case: dangling symlinks (target doesn't exist) return NO for writability
+- Resolution: Test link path directly; use `lstat()` internally if needed
+- Default: test link destination (matches `isWritableFileAtPath:` behavior)
+- Optional `--no-follow-links` to skip symlink resolution
 
 ### Special Files
-- `/dev/null` and `/dev/zero` are writable but not useful for data
-- Mark as "special" in output
+- `/dev/null` and `/dev/zero` are writable but not useful for data persistence
+- Mark as "special" in output with `(device)` annotation
 - Include in results (useful for sandbox profile validation)
+- Other special files: `/dev/random`, `/dev/urandom`, named pipes (FIFOs)
+
+### Hardlinks
+- Multiple hardlinks to same inode share permissions
+- Testing any hardlink tests the underlying file
+- No special handling needed (same behavior as regular files)
 
 ---
 
@@ -508,6 +853,52 @@ Log in `--verbose` mode: `(skipped: permission denied)`
 2. **Early termination**: Stop enumeration at depth limit
 3. **Caching**: Cache container path and temp directory
 4. **Parallel enumeration**: Not feasible in LLDB (single expression thread)
+
+---
+
+---
+
+## Advanced: Sandbox Extensions
+
+Sandbox extensions are tokens that temporarily grant additional filesystem access to sandboxed processes. Understanding them is important for complete sandbox analysis.
+
+### How Extensions Work
+
+```c
+// Extension issuing (by privileged process):
+const char *sandbox_extension_issue_file(
+    const char *extension_class,  // e.g., "com.apple.app-sandbox.read-write"
+    const char *path,
+    uint32_t flags
+);
+
+// Extension consumption (by sandboxed process):
+int sandbox_extension_consume(const char *token);  // Returns -1 on failure
+```
+
+### Common Extension Classes
+
+| Extension Class | Access Granted |
+|-----------------|----------------|
+| `com.apple.app-sandbox.read` | Read-only file access |
+| `com.apple.app-sandbox.read-write` | Read-write file access |
+| `com.apple.app-sandbox.read-by-process` | Process-scoped read access |
+
+### When Extensions Are Granted
+
+- **NSOpenPanel/NSSavePanel**: User file selection grants temporary access
+- **Drag and drop**: Files dropped grant read access to destination
+- **XPC services**: Some services issue extensions to clients
+- **Security-scoped bookmarks**: Persistent access across app launches
+
+### Detection in osbx
+
+Extensions are challenging to detect because:
+1. They're dynamic (granted at runtime, not in profile)
+2. No public API to enumerate active extensions
+3. A path may be writable due to extension, not profile
+
+**Approach**: Note that `osbx` reports *current* writability, which includes active extensions. For profile-only analysis, use `--sandbox-only` mode with `sandbox_check()`.
 
 ---
 
@@ -628,12 +1019,91 @@ osbx --entitlements
 
 ---
 
+---
+
+## Additional Edge Cases
+
+### Race Conditions
+- Filesystem state can change between check and use (TOCTOU)
+- `osbx` reports point-in-time state, not guaranteed future access
+- Dynamic sandbox extensions may be revoked at any time
+
+### Case Sensitivity
+- macOS filesystem is typically case-insensitive but case-preserving
+- iOS filesystem is case-sensitive
+- Path `/tmp/Test` and `/tmp/test` may or may not be the same
+
+### Path Canonicalization
+- `~/` expansion must happen within debugged process context
+- Symlinks in paths (e.g., `/tmp` → `/private/tmp`) should be handled
+- Use `NSString stringByResolvingSymlinksInPath` for canonical paths
+
+```python
+def canonicalize_path(frame: lldb.SBFrame, path: str) -> str:
+    """Resolve symlinks and normalize path."""
+    expr = f'(NSString *)[[@"{path}" stringByExpandingTildeInPath] stringByResolvingSymlinksInPath]'
+    result = frame.EvaluateExpression(expr)
+    if result.GetError().Success():
+        return result.GetSummary().strip('"')
+    return path
+```
+
+### SIP-Protected Paths
+System Integrity Protection (SIP) on macOS restricts even root from writing to:
+- `/System/`
+- `/usr/` (except `/usr/local/`)
+- `/bin/`, `/sbin/`
+- System applications
+
+These paths will show as non-writable regardless of sandbox state.
+
+### Mounted Volumes
+- External drives: `/Volumes/{name}/`
+- Network shares: `/Volumes/{name}/` or custom mount points
+- DMG images: `/Volumes/{name}/` while mounted
+
+Consider testing mounted volumes separately with `--include-volumes` flag.
+
+### iOS Jailbreak Detection
+On jailbroken devices:
+- Sandbox may be bypassed or weakened
+- Additional paths may be writable
+- Detection: Check for `/Applications/Cydia.app`, `/private/var/stash`, etc.
+
+```python
+def is_jailbroken(frame: lldb.SBFrame) -> bool:
+    """Detect common jailbreak indicators."""
+    jailbreak_paths = [
+        "/Applications/Cydia.app",
+        "/Library/MobileSubstrate/",
+        "/private/var/stash",
+        "/usr/bin/ssh",
+        "/etc/apt",
+    ]
+    for path in jailbreak_paths:
+        expr = f'(BOOL)[[NSFileManager defaultManager] fileExistsAtPath:@"{path}"]'
+        result = frame.EvaluateExpression(expr)
+        if result.GetValueAsUnsigned() == 1:
+            return True
+    return False
+```
+
+---
+
 ## References
 
 - [Apple: Configuring the macOS App Sandbox](https://developer.apple.com/documentation/xcode/configuring-the-macos-app-sandbox)
-- [HackTricks: macOS Sandbox](https://book.hacktricks.xyz/macos-hardening/macos-security-and-privilege-escalation/macos-security-protections/macos-sandbox)
+- [Apple: Discovering and diagnosing App Sandbox violations](https://developer.apple.com/documentation/security/discovering-and-diagnosing-app-sandbox-violations)
 - [Apple: NSFileManager isWritableFileAtPath](https://developer.apple.com/documentation/foundation/nsfilemanager/1416680-iswritablefileatpath)
+- [Apple: App Groups Entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.application-groups)
+- [HackTricks: macOS Sandbox](https://book.hacktricks.xyz/macos-hardening/macos-security-and-privilege-escalation/macos-security-protections/macos-sandbox)
+- [HackTricks: macOS Sandbox Debug & Bypass](https://book.hacktricks.wiki/en/macos-hardening/macos-security-and-privilege-escalation/macos-security-protections/macos-sandbox/macos-sandbox-debug-and-bypass/index.html)
+- [A New Era of macOS Sandbox Escapes](https://jhftss.github.io/A-New-Era-of-macOS-Sandbox-Escapes/) - CVE research on sandbox_extension APIs
 - [Igor's Techno Club: sandbox-exec](https://igorstechnoclub.com/sandbox-exec/)
 - [GeoSn0w: A Long Evening with macOS Sandbox](https://geosn0w.github.io/A-Long-Evening-With-macOS's-Sandbox/)
 - [Objection: Runtime Mobile Exploration](https://github.com/sensepost/objection)
+- [sb_validator: sandbox_check() validation tool](https://github.com/Karmaz95/sb_validator)
+- [RDProcess: apple_sandbox.h header](https://github.com/rodionovd/RDProcess/blob/master/apple_sandbox.h) - Private API definitions
+- [8kSec: Reading iOS Sandbox Profiles](https://8ksec.io/reading-ios-sandbox-profiles/)
 - [Apple: Accessing Files and Directories](https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/FileSystemProgrammingGuide/AccessingFilesandDirectories/AccessingFilesandDirectories.html)
+- [Ubrigens: A Whirlwind Tour of the Apple Sandbox](https://ubrigens.com/posts/sandbox_tour.html)
