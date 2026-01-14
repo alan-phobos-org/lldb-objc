@@ -719,7 +719,7 @@ def osbx_command(
         else:
             # Determine denial reason
             reason = "permission_denied"
-            if path.startswith("/System") or path.startswith("/usr/") and not path.startswith("/usr/local"):
+            if path.startswith("/System") or (path.startswith("/usr/") and not path.startswith("/usr/local")):
                 reason = "sip_protected"
             elif sandbox_active:
                 reason = "sandbox_denied"

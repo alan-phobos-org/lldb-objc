@@ -133,3 +133,39 @@ Optimal batch size for class enumeration: **35** classes per `EvaluateExpression
 ### Caching
 - Per-process caching: first run ~12s, cached <0.01s
 - Cache invalidated on `--reload`, process restart, or framework load
+
+---
+
+## Sandbox Command (osbx)
+
+### fnmatch Behavior
+Python's `fnmatch` treats `*` differently than shell globbing - it **matches `/` characters**. This is more permissive than expected.
+
+```python
+# fnmatch behavior (Python)
+fnmatch.fnmatch("/tmp/foo/bar", "/tmp/*")  # True (unexpected)
+
+# Shell glob behavior
+# /tmp/* would NOT match /tmp/foo/bar
+```
+
+If you need strict single-directory matching, use regex or implement custom logic.
+
+### Platform Detection
+The target triple alone isn't sufficient to distinguish iOS from macOS on Apple Silicon:
+- `arm64-apple-darwin` could be either iOS device or Apple Silicon Mac
+- Disambiguate by checking `NSHomeDirectory()` patterns:
+  - `/var/mobile/` → iOS
+  - `/Users/` → macOS
+  - `/Library/Containers/` → macOS (sandboxed app)
+
+### Operator Precedence
+Watch for `or`/`and` precedence issues in conditions:
+
+```python
+# WRONG - and binds tighter than or
+if path.startswith("/System") or path.startswith("/usr/") and not path.startswith("/usr/local"):
+
+# RIGHT - explicit parentheses
+if path.startswith("/System") or (path.startswith("/usr/") and not path.startswith("/usr/local")):
+```
