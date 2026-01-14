@@ -6,9 +6,10 @@ that doesn't require LLDB runtime.
 """
 
 import json
+import os
 import pytest
 import sys
-import os
+import tempfile
 
 # Add scripts directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../scripts"))
@@ -19,6 +20,8 @@ from objc_sandbox import (
     escape_objc_string,
     generate_test_paths,
     format_output_json,
+    format_progress,
+    ScanLogger,
     DEFAULT_IGNORE_PATTERNS,
 )
 
@@ -280,3 +283,128 @@ class TestGenerateTestPathsParametrized:
         # Note: some paths may be templates or tilde-prefixed
         found = any(expected_path in p or p.endswith(expected_path.lstrip("~")) for p in paths)
         assert found, f"Expected {expected_path} to be in paths for {platform}"
+
+
+class TestFormatProgress:
+    """Tests for format_progress() function."""
+
+    @pytest.mark.sandbox
+    def test_progress_basic(self):
+        """Should format basic progress string."""
+        import time
+
+        start = time.time()
+        progress = format_progress(50, 100, 5, start)
+        assert "50/100" in progress
+        assert "50%" in progress
+        assert "5 writable" in progress
+
+    @pytest.mark.sandbox
+    def test_progress_zero_total(self):
+        """Should handle zero total gracefully."""
+        import time
+
+        progress = format_progress(0, 0, 0, time.time())
+        assert "Scanning" in progress
+
+    @pytest.mark.sandbox
+    def test_progress_complete(self):
+        """Should show 100% when complete."""
+        import time
+
+        progress = format_progress(100, 100, 10, time.time())
+        assert "100%" in progress
+        assert "ETA" not in progress  # No ETA when complete
+
+
+class TestScanLogger:
+    """Tests for ScanLogger class."""
+
+    @pytest.mark.sandbox
+    def test_logger_creates_file(self):
+        """Logger should create log file with correct format."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
+            log_path = f.name
+
+        try:
+            logger = ScanLogger(log_path)
+            logger.log_check("/tmp/test", "writable", "directory", "-")
+            logger.log_check("/System", "not_writable", "directory", "sip_protected")
+            logger.write({"platform": "macOS", "container": "/Users/test"})
+
+            with open(log_path, "r") as f:
+                content = f.read()
+
+            # Check header
+            assert "# osbx scan log" in content
+            assert "Platform: macOS" in content
+            assert "Container: /Users/test" in content
+
+            # Check column headers
+            assert "PATH\tRESULT\tTYPE\tREASON\tDETAILS" in content
+
+            # Check entries
+            assert "/tmp/test\twritable\tdirectory" in content
+            assert "/System\tnot_writable\tdirectory\tsip_protected" in content
+        finally:
+            os.unlink(log_path)
+
+    @pytest.mark.sandbox
+    def test_logger_counts_writable(self):
+        """Logger should correctly count writable paths."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
+            log_path = f.name
+
+        try:
+            logger = ScanLogger(log_path)
+            logger.log_check("/tmp", "writable", "directory", "-")
+            logger.log_check("/var", "writable", "directory", "-")
+            logger.log_check("/System", "not_writable", "directory", "sip_protected")
+            logger.write({"platform": "macOS"})
+
+            with open(log_path, "r") as f:
+                content = f.read()
+
+            # Should show 2 writable paths
+            assert "Writable: 2" in content
+            assert "Paths tested: 3" in content
+        finally:
+            os.unlink(log_path)
+
+    @pytest.mark.sandbox
+    def test_logger_with_filter(self):
+        """Logger should include filter in header if provided."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
+            log_path = f.name
+
+        try:
+            logger = ScanLogger(log_path)
+            logger.log_check("/tmp/foo", "writable", "directory", "-")
+            logger.write({"platform": "iOS", "filter": "/tmp/**"})
+
+            with open(log_path, "r") as f:
+                content = f.read()
+
+            assert "# Filter: /tmp/**" in content
+        finally:
+            os.unlink(log_path)
+
+
+class TestFormatOutputJsonInterrupted:
+    """Tests for interrupted flag in JSON output."""
+
+    @pytest.mark.sandbox
+    def test_json_includes_interrupted_false(self):
+        """JSON output should include interrupted: false by default."""
+        output = format_output_json([], [], "macOS", None, None, False, 0, 0.1, "default")
+        data = json.loads(output)
+        assert data["interrupted"] is False
+
+    @pytest.mark.sandbox
+    def test_json_includes_interrupted_true(self):
+        """JSON output should include interrupted: true when set."""
+        output = format_output_json(
+            [], [], "macOS", None, None, False, 0, 0.1, "default", interrupted=True
+        )
+        data = json.loads(output)
+        assert data["interrupted"] is True

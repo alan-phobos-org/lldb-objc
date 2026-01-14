@@ -13,6 +13,7 @@ Commands that feel like native debugger features, not bolted-on scripts. Output 
 | [AGENTS.md](AGENTS.md) | Development workflow, commands | Always |
 | [docs/PLAN.md](docs/PLAN.md) | Roadmap, backlog | Planning work |
 | [docs/DESIGN.md](docs/DESIGN.md) | Architecture, patterns | Major refactoring |
+| [docs/SANDBOX_DESIGN.md](docs/SANDBOX_DESIGN.md) | Sandbox scanner design | Working on osbx |
 | [docs/PITFALLS.md](docs/PITFALLS.md) | Technical gotchas | Debugging failures |
 | [docs/TESTING.md](docs/TESTING.md) | Test guide | Writing tests |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Optimization | Performance work |
@@ -44,7 +45,7 @@ Commands that feel like native debugger features, not bolted-on scripts. Output 
 | `oinstance` | Inspect object | `oinstance $0` |
 | `oexplain` | Explain disassembly | `oexplain $pc` |
 | `odecompile` | Decompile function | `odecompile $pc` |
-| `osbx` | Scan sandbox writable paths | `osbx --quick` |
+| `osbx` | Scan sandbox writable paths | `osbx --thorough` |
 | `oreload` | Reload commands | `oreload` |
 
 ## Workflows

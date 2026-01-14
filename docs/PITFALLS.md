@@ -169,3 +169,10 @@ if path.startswith("/System") or path.startswith("/usr/") and not path.startswit
 # RIGHT - explicit parentheses
 if path.startswith("/System") or (path.startswith("/usr/") and not path.startswith("/usr/local")):
 ```
+
+### Directory Enumeration Performance
+When enumerating directories in thorough mode:
+- Limit entries per directory (`MAX_ENTRIES_PER_DIR = 100`) to prevent explosion
+- Check if directory is readable before attempting enumeration
+- Track visited paths to avoid symlink loops
+- Use breadth-first expansion with depth limits
