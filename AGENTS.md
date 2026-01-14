@@ -37,7 +37,7 @@ Commands that feel like native debugger features, not bolted-on scripts. Output 
 |---------|---------|---------|
 | `obrk` | Set breakpoints | `obrk -[Class sel:]` |
 | `osel` | Find methods | `osel NSString *init*` |
-| `ocls` | Find classes | `ocls IDS* --ivars` |
+| `ocls` | Find classes | `ocls CS* --ivars` |
 | `ocall` | Call methods | `ocall [$0 description]` |
 | `owatch` | Auto-log breakpoints | `owatch --minimal -[NSString init]` |
 | `oprotos` | Protocol conformance | `oprotos --list *Delegate` |

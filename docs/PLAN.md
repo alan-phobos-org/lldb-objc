@@ -28,9 +28,9 @@ The project has a solid foundation with 10+ commands covering the core use cases
 Extend `osel` to search across multiple classes:
 
 ```bash
-osel IDS* send*
-# -[IDSService sendMessage:]
-# -[IDSConnection sendAck:]
+osel CS* symbol*
+# -[CSSymbolOwner symbolWithName:]
+# -[CSSymbolicator symbolOwnerForName:]
 # Total: 4 methods in 3 classes
 ```
 

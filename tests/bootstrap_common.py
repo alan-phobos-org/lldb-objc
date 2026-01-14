@@ -13,6 +13,7 @@ SCRIPTS_DIR = os.path.join(PROJECT_ROOT, "scripts")
 # Binary paths
 HELLOWORLD_PATH = os.path.join(PROJECT_ROOT, "examples/HelloWorld/HelloWorld/HelloWorld")
 HELLOWORLD_OPTIMISED_PATH = os.path.join(PROJECT_ROOT, "examples/HelloWorld-Optimised/HelloWorld/HelloWorld")
+HELLOWORLD_SANDBOXED_PATH = os.path.join(PROJECT_ROOT, "examples/HelloWorld-Sandboxed/HelloWorld/HelloWorld")
 
 
 def verify_paths(binary_path: str, build_hint: str = None) -> None:
@@ -55,8 +56,8 @@ run
 # Delete the main breakpoint now that we've hit it
 breakpoint delete 1
 
-# Load IDS.framework for additional testing
-expr (void)dlopen("/System/Library/PrivateFrameworks/IDS.framework/IDS", 0x2)
+# Load CoreSymbolication.framework for additional testing
+expr (void)dlopen("/System/Library/PrivateFrameworks/CoreSymbolication.framework/CoreSymbolication", 0x2)
 """
 
 
@@ -76,6 +77,26 @@ file {binary_path}
 breakpoint set -n objc_autoreleasePoolPush --one-shot true
 run
 
-# Load IDS.framework for additional testing while stopped
-expr (void)dlopen("/System/Library/PrivateFrameworks/IDS.framework/IDS", 0x2)
+# Load CoreSymbolication.framework for additional testing while stopped
+expr (void)dlopen("/System/Library/PrivateFrameworks/CoreSymbolication.framework/CoreSymbolication", 0x2)
+"""
+
+
+def make_commands_for_sandboxed_binary(binary_path: str) -> str:
+    """Generate LLDB commands for sandboxed binary testing.
+
+    Uses sandbox_init as the breakpoint since the binary is non-optimised
+    and symbols are readily available. This stops just before sandbox is applied.
+    """
+    return f"""
+# Load the target binary
+file {binary_path}
+
+# Break on sandbox_init - stops right before sandbox restrictions are applied
+# (binary is non-optimised so symbols are easy to find)
+breakpoint set -n sandbox_init --one-shot true
+run
+
+# Load CoreSymbolication.framework for additional testing while stopped
+expr (void)dlopen("/System/Library/PrivateFrameworks/CoreSymbolication.framework/CoreSymbolication", 0x2)
 """

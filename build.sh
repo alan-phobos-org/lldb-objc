@@ -139,6 +139,15 @@ __author__ = "Alan"
 __description__ = "LLDB commands for Objective-C method introspection and debugging"
 EOF
 
+    # Copy osbx-standalone tools
+    mkdir -p "$DIST_DIR/$PACKAGE_DIR/tools/osbx-standalone/sandbox_profiles"
+    cp "$ROOT_DIR/tools/osbx-standalone/main.c" "$DIST_DIR/$PACKAGE_DIR/tools/osbx-standalone/"
+    cp "$ROOT_DIR/tools/osbx-standalone/Makefile" "$DIST_DIR/$PACKAGE_DIR/tools/osbx-standalone/"
+    cp "$ROOT_DIR/tools/osbx-standalone/osbx_spawn.py" "$DIST_DIR/$PACKAGE_DIR/tools/osbx-standalone/"
+    cp "$ROOT_DIR/tools/osbx-standalone/sign-with-entitlements.sh" "$DIST_DIR/$PACKAGE_DIR/tools/osbx-standalone/"
+    cp "$ROOT_DIR/tools/osbx-standalone/README.md" "$DIST_DIR/$PACKAGE_DIR/tools/osbx-standalone/"
+    cp "$ROOT_DIR"/tools/osbx-standalone/sandbox_profiles/*.sb "$DIST_DIR/$PACKAGE_DIR/tools/osbx-standalone/sandbox_profiles/"
+
     # Create zip
     (cd "$DIST_DIR" && zip -r "$ZIP_NAME" "$PACKAGE_DIR" && rm -rf "$PACKAGE_DIR")
 

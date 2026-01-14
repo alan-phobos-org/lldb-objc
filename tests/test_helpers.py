@@ -83,7 +83,7 @@ def check_hello_world_binary():
     return True
 
 
-def run_lldb_test(commands, scripts=None, timeout=30, load_ids_framework=True):
+def run_lldb_test(commands, scripts=None, timeout=30, load_private_framework=True):
     """
     Run LLDB with a series of commands and return the output.
 
@@ -91,7 +91,7 @@ def run_lldb_test(commands, scripts=None, timeout=30, load_ids_framework=True):
         commands: List of LLDB commands to execute
         scripts: List of script paths to import (e.g., ['objc_cls.py', 'objc_sel.py'])
         timeout: Timeout in seconds
-        load_ids_framework: Whether to load IDS.framework for private class testing
+        load_private_framework: Whether to load CoreSymbolication.framework for private class testing
 
     Returns:
         Tuple of (stdout, stderr, return_code)
@@ -123,13 +123,11 @@ def run_lldb_test(commands, scripts=None, timeout=30, load_ids_framework=True):
     cmd_args.extend(["-o", "run"])
     cmd_args.extend(["-o", "breakpoint delete 1"])  # Clear the main breakpoint after hit
 
-    if load_ids_framework:
-        cmd_args.extend(
-            [
-                "-o",
-                'expr (void)dlopen("/System/Library/PrivateFrameworks/IDS.framework/IDS", 0x2)',
-            ]
+    if load_private_framework:
+        dlopen_cmd = (
+            'expr (void)dlopen("/System/Library/PrivateFrameworks/CoreSymbolication.framework/CoreSymbolication", 0x2)'
         )
+        cmd_args.extend(["-o", dlopen_cmd])
 
     # Add user commands
     for cmd in commands:
@@ -311,18 +309,18 @@ class SharedLLDBSession:
         "objc_decompile.py": "odecompile",
     }
 
-    def __init__(self, scripts=None, load_ids_framework=True, timeout=30, validate_commands=True):
+    def __init__(self, scripts=None, load_private_framework=True, timeout=30, validate_commands=True):
         """
         Initialize the shared LLDB session.
 
         Args:
             scripts: List of script paths to import (e.g., ['scripts/objc_breakpoint.py'])
-            load_ids_framework: Whether to load IDS.framework for private class testing
+            load_private_framework: Whether to load CoreSymbolication.framework for private class testing
             timeout: Default timeout for commands in seconds
             validate_commands: Whether to validate that commands loaded successfully (default: True)
         """
         self.scripts = scripts or []
-        self.load_ids_framework = load_ids_framework
+        self.load_private_framework = load_private_framework
         self.default_timeout = timeout
         self.validate_commands = validate_commands
         self.child = None
@@ -396,9 +394,13 @@ class SharedLLDBSession:
         init_commands.append("breakpoint set -n main")
         init_commands.append("run")
 
-        # Load IDS framework if requested
-        if self.load_ids_framework:
-            init_commands.append('expr (void)dlopen("/System/Library/PrivateFrameworks/IDS.framework/IDS", 0x2)')
+        # Load private framework if requested
+        if self.load_private_framework:
+            dlopen_cmd = (
+                'expr (void)dlopen("/System/Library/PrivateFrameworks/'
+                'CoreSymbolication.framework/CoreSymbolication", 0x2)'
+            )
+            init_commands.append(dlopen_cmd)
 
         # Execute each init command
         for cmd in init_commands:

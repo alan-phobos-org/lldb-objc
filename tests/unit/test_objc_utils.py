@@ -293,9 +293,9 @@ class TestParseMethodSignatureParametrized:
             ("+[NSString string]", "NSString", "string"),
             ("[NSObject new]", "NSObject", "new"),
             (
-                "-[IDSService _internal_sendMessage:withTimeout:completion:]",
-                "IDSService",
-                "_internal_sendMessage:withTimeout:completion:",
+                "-[CSSymbolicator _internal_symbolicate:withOptions:completion:]",
+                "CSSymbolicator",
+                "_internal_symbolicate:withOptions:completion:",
             ),
         ],
     )

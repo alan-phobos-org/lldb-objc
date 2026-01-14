@@ -1280,6 +1280,32 @@ Extensions are challenging to detect because:
 
 ## Testing Strategy
 
+### Important: sandbox_init() vs App Sandbox
+
+There are two ways to sandbox a macOS binary, with very different testing characteristics:
+
+| Approach | Container Path | NSFileManager Respects | sandbox_check() from LLDB | Recommended For |
+|----------|---------------|------------------------|---------------------------|-----------------|
+| **App Sandbox (entitlements)** | ~/Library/Containers/... | Yes | Yes | Production apps, reliable testing |
+| **sandbox_init() (code)** | None (normal home) | **No** | **No** | Quick prototyping, demonstration |
+
+**Why sandbox_init() has limitations:**
+1. `NSFileManager.isWritableFileAtPath:` checks Unix permissions, not sandbox policy
+2. LLDB expression evaluation creates injected code that may bypass process sandbox
+3. No container path created, so path-based detection fails
+
+**For testing osbx sandbox detection:**
+- Use `examples/HelloWorld-Sandboxed/` which uses `sandbox_init()` - demonstrates the limitations
+- The sandbox IS active (binary's own `sandbox_check()` calls work correctly)
+- But osbx cannot reliably detect it due to LLDB expression evaluation context
+
+**For production sandbox auditing:**
+- Target real App Sandbox apps with entitlements
+- These have detectable container paths under `/Library/Containers/`
+- `sandbox_check()` works correctly when called in that context
+
+See [PITFALLS.md](PITFALLS.md) for detailed technical explanation.
+
 ### Sandboxed Test Binary
 
 To enable predictable sandbox testing, we build a variant of the `helloworld` test binary that opts into a known sandbox profile. This provides deterministic expected results for integration tests.

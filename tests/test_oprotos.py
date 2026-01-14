@@ -50,8 +50,8 @@ def _is_session_state_issue(output):
     # Timeout waiting for command
     if "timeout" in output_lower:
         return True
-    # IDS output from previous test
-    if "ids" in output_lower and "--list" in output_lower:
+    # CS output from previous test
+    if "cs" in output_lower and "--list" in output_lower:
         return True
     return False
 
@@ -591,11 +591,11 @@ def validate_private_protocol():
     """Validator for private framework protocol."""
 
     def validator(output):
-        if "IDS" in output or "No protocol" in output or "protocol" in output.lower():
+        if "CS" in output or "No protocol" in output or "protocol" in output.lower():
             return True, "Private framework protocol lookup handled"
         return False, (
             f"Unexpected output format\n"
-            f"    Expected: IDS protocols or 'No protocol' message or 'protocol' keyword\n"
+            f"    Expected: CS protocols or 'No protocol' message or 'protocol' keyword\n"
             f"    Actual output: {output[:300]}"
         )
 
@@ -609,8 +609,8 @@ def validate_combined_flags():
         # Handle session state issues from long-running test suite
         if _is_session_state_issue(output):
             return True, "Session state issue (expected in long test suites)"
-        # Previous test output leaking (IDS* output from private protocol test)
-        if "IDS" in output and "--list" in output:
+        # Previous test output leaking (CS* output from private protocol test)
+        if "CS" in output and "--list" in output:
             return (
                 True,
                 "Session state issue - previous test output (expected in long test suites)",
@@ -803,7 +803,7 @@ def get_test_specs():
         ),
         (
             "Edge case: private framework protocol",
-            ["oprotos --list IDS*"],
+            ["oprotos --list CS*"],
             validate_private_protocol(),
         ),
         (

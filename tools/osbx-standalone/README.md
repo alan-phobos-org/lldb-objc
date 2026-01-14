@@ -28,11 +28,14 @@ make
 
 ### Option B: Match Target App's Entitlements
 
-Extract entitlements from a target app and sign osbx-standalone with them:
+Extract entitlements from a target app or system binary and sign osbx-standalone with them:
 
 ```bash
-# Sign with Safari's entitlements (ad-hoc for local testing)
-./sign-with-entitlements.sh /Applications/Safari.app
+# Sign with a third-party app's entitlements
+./sign-with-entitlements.sh /Applications/SomeApp.app
+
+# Sign with a system daemon's entitlements
+./sign-with-entitlements.sh /System/Library/PrivateFrameworks/ApplePushService.framework/apsd
 
 # Now run without applying sandbox (kernel uses entitlements)
 ./osbx-standalone --no-sandbox /tmp /var ~/Documents
@@ -42,6 +45,18 @@ For distribution, specify a Developer ID:
 ```bash
 ./sign-with-entitlements.sh /Applications/MyApp.app "Developer ID Application: My Name"
 ```
+
+**Important limitations:**
+
+- **App Sandbox entitlement**: The `com.apple.security.app-sandbox` entitlement requires system container setup and doesn't work with ad-hoc signed binaries. The script automatically filters it out.
+
+- **System daemons**: Binaries like `apsd`, `rapportd`, etc. typically use launchd sandbox profiles (`.sb` files) rather than entitlements. Use Option A with their profile instead:
+  ```bash
+  # System profiles are in /System/Library/Sandbox/Profiles/
+  ls /System/Library/Sandbox/Profiles/*.sb
+  ```
+
+- **Restricted entitlements**: Many `com.apple.private.*` and other entitlements only work with Apple-signed binaries. The script automatically filters these out.
 
 ### Option C: Fork from Sandboxed Process (via LLDB)
 
@@ -156,6 +171,9 @@ The tool uses either:
 - **Signing required**: Modern macOS requires signed binaries
 - **Profile matching**: Need to extract/recreate target app's sandbox profile
 - **Not in-process**: Cannot access target app's memory or state
+- **App Sandbox via entitlements**: The `com.apple.security.app-sandbox` entitlement requires system container setup that doesn't work with ad-hoc signing. For sandboxed apps, use Option A with a custom profile instead.
+- **System daemon profiles**: Launchd sandbox profiles (`.sb` files) often use parameters like `(param "TMPDIR")` that require runtime values. These may need to be simplified or parameterized for use with this tool.
+- **Restricted entitlements**: Many Apple entitlements (`com.apple.private.*`, etc.) only work with Apple-signed binaries and are automatically filtered out.
 
 ## Related
 

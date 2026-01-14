@@ -30,6 +30,43 @@ f"(void)^{ ... }"  # Python interprets { as f-string
 f"(void)^{{ ... }}"  # Escapes to literal ^{
 ```
 
+### LLDB Block Expressions: for-in Loops Don't Work
+Use index-based iteration inside LLDB block expressions. `for-in` causes warnings and may fail.
+
+```objc
+// WRONG - for-in generates warnings, may fail
+for (NSString *path in paths) { ... }
+
+// RIGHT - index-based iteration
+for (NSUInteger i = 0; i < [paths count]; i++) {
+    NSString *path = paths[i];
+    ...
+}
+```
+
+### LLDB Blocks: Cast Function Return Types
+Functions called inside LLDB blocks need explicit return type casts.
+
+```objc
+// WRONG - 'access' has unknown return type error
+int result = access([path UTF8String], 2);
+
+// RIGHT - explicit cast
+int result = (int)access([path UTF8String], 2);
+```
+
+### NSNumber Boolean Parsing
+`GetValueAsUnsigned()` returns the NSNumber *pointer address*, not the boolean value. Use `GetSummary()` which returns "YES" or "NO".
+
+```python
+# WRONG - returns pointer address like 8803572976
+child.GetValueAsUnsigned()
+
+# RIGHT - returns "YES" or "NO"
+child.GetSummary()  # "YES" or "NO"
+is_true = child.GetSummary() == "YES"
+```
+
 ### ASLR/Address Handling
 Always use `SBAddress` for breakpoints, never raw ints.
 
@@ -91,6 +128,21 @@ finally:
 - If manual testing reveals a bug that tests missed, improve the test framework
 - Tests passing is necessary but not sufficient - manually verify in actual LLDB session
 - Test infrastructure itself needs validation (e.g., ensure it catches tracebacks)
+
+### Development Workflow: Run ./install.py After Changes
+LLDB loads Python modules at startup from the installed location. After modifying source files:
+
+```bash
+./install.py  # Copy scripts to ~/.lldb/lldb-objc/
+```
+
+Then start a fresh LLDB session. The `oreload` command may not fully reload due to Python module caching. For guaranteed testing of changes:
+
+```bash
+# Use --no-lldbinit to avoid cached modules
+lldb --no-lldbinit
+(lldb) command script import /path/to/scripts/your_module.py
+```
 
 ### Root Cause Analysis
 When something unexpected happens (tests pass but code fails):
@@ -176,3 +228,67 @@ When enumerating directories in thorough mode:
 - Check if directory is readable before attempting enumeration
 - Track visited paths to avoid symlink loops
 - Use breadth-first expansion with depth limits
+
+### sandbox_init() Detection - Use access() not sandbox_check()
+
+Binaries that opt into a sandbox via `sandbox_init()` require special handling:
+
+1. **NSFileManager doesn't respect sandbox restrictions**: `isWritableFileAtPath:` checks Unix file permissions only, not sandbox policy.
+
+2. **sandbox_check() always returns "denied" from LLDB**: When called via LLDB expression evaluation, `sandbox_check()` always returns 1 (denied) regardless of actual sandbox policy - even for paths the sandbox allows.
+
+3. **access() works correctly**: The `access(path, W_OK)` system call properly respects `sandbox_init()` restrictions when called from LLDB.
+
+```c
+// From LLDB expression - sandbox_check BROKEN:
+(lldb) expr (int)sandbox_check((pid_t)getpid(), "file-write-data", 1, "/tmp")
+(int) $0 = 1  // WRONG - says denied even when /tmp is allowed!
+
+// From LLDB expression - access() WORKS:
+(lldb) expr (int)access("/tmp", 2)  // W_OK = 2
+(int) $0 = 0  // CORRECT - allowed
+
+(lldb) expr (int)access("/var", 2)
+(int) $0 = -1  // CORRECT - denied
+```
+
+**Solution implemented in osbx**: Use `access(path, W_OK)` for both sandbox detection and path writability checks. This correctly handles both App Sandbox and `sandbox_init()` sandboxes.
+
+See `examples/HelloWorld-Sandboxed/` for a test binary.
+
+### SBPL Profile Syntax: deny-default vs allow-default
+
+When writing custom sandbox profiles with SBPL (Sandbox Profile Language), **avoid `(deny default)`** as the base policy.
+
+**Problem**: `(deny default)` requires explicitly allowing every single operation the process needs - mach ports, signals, syscalls, IPC, shared memory, etc. Missing any operation causes cryptic failures (e.g., error code 5683 with no error message).
+
+```c
+// WRONG - requires enumerating every operation
+static const char *PROFILE =
+    "(version 1)\n"
+    "(deny default)\n"
+    "(allow process*)\n"       // process* isn't valid
+    "(allow mach*)\n"          // mach* isn't valid
+    "(allow system*)\n"        // system* isn't valid
+    // ... will fail with unhelpful error
+```
+
+**Solution**: Use `(allow default)` and selectively deny what you want to restrict. Later rules override earlier ones.
+
+```c
+// RIGHT - start permissive, restrict specific things
+static const char *PROFILE =
+    "(version 1)\n"
+    "(allow default)\n"        // allow everything first
+    "(deny network*)\n"        // block network
+    "(deny file-write*)\n"     // block all writes
+    "(allow file-write* (subpath \"/private/tmp\"))\n"  // whitelist
+    "(allow file-write* (subpath \"/tmp\"))\n"
+    "(allow file-write* (subpath \"/dev\"))\n";
+```
+
+**Key points**:
+- Operation wildcards like `process*`, `mach*`, `system*` are often invalid
+- SBPL requires specific operation names: `mach-lookup`, `process-exec`, `signal`, etc.
+- Rule order matters - later rules override earlier ones
+- Use builtin profiles (e.g., `"no-network"` with `SANDBOX_NAMED_BUILTIN`) as a simpler alternative when possible

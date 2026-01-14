@@ -93,20 +93,20 @@ osel ClassName pattern      # Filter by pattern (substring or wildcard)
 
 **Examples:**
 ```
-# List all methods in IDSService
-osel IDSService
+# List all methods in CSSymbolOwner
+osel CSSymbolOwner
 
-# Substring matching - find selectors containing "service"
-osel IDSService service
+# Substring matching - find selectors containing "symbol"
+osel CSSymbolOwner symbol
 
 # Wildcard patterns
-osel IDSService *ternal      # Selectors ending with 'ternal'
-osel IDSService _init*       # Selectors starting with '_init'
-osel IDSService *set*        # Selectors containing 'set' anywhere
+osel CSSymbolOwner *name*    # Selectors containing 'name'
+osel CSSymbolOwner _init*    # Selectors starting with '_init'
+osel CSSymbolOwner *set*     # Selectors containing 'set' anywhere
 
 # Find specific selectors
-osel IDSService serviceIdentifier
-osel IDSService _internal
+osel CSSymbolOwner symbolWithName
+osel CSSymbolOwner _internal
 
 # Works with private classes too
 osel _UINavigationBarContentView layout
@@ -139,18 +139,18 @@ ocls [--reload] [--clear-cache] [--verbose] [--batch-size=N] [pattern]
 ocls
 
 # Exact match (fast-path - bypasses full enumeration)
-ocls IDSService          # Exact match for "IDSService" class (<0.01s)
+ocls CSSymbolOwner       # Exact match for "CSSymbolOwner" class (<0.01s)
 ocls UIViewController    # Shows: UIViewController → UIResponder → NSObject
 
 # Wildcard patterns (uses cache or full enumeration)
-ocls IDS*                # All classes starting with "IDS"
+ocls CS*                 # All classes starting with "CS"
 ocls *Service            # All classes ending with "Service"
 ocls *Navigation*        # All classes containing "Navigation"
 ocls _UI*                # All private UIKit classes
 
 # Cache control
 ocls --reload            # Refresh the cache (after loading new frameworks)
-ocls --reload IDS*       # Refresh and filter
+ocls --reload CS*        # Refresh and filter
 ocls --clear-cache       # Clear cache for current process
 
 # Performance tuning (for testing different batch sizes)
@@ -158,7 +158,7 @@ ocls --batch-size=50 --reload    # Use larger batches
 ocls --batch-size 25 --reload    # Use smaller batches
 
 # Verbose output (shows detailed timing breakdown)
-ocls --verbose IDS*              # Detailed metrics for pattern search
+ocls --verbose CS*               # Detailed metrics for pattern search
 ocls --verbose --reload          # Detailed metrics for cache refresh
 ```
 
@@ -359,6 +359,7 @@ ClassName (0x123456789abc)
 - [docs/TESTING.md](docs/TESTING.md) - Testing guide and best practices
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md) - Performance optimization
 - [docs/UI_CONVENTIONS.md](docs/UI_CONVENTIONS.md) - UI formatting conventions
+- [docs/SANDBOX_SUMMARY.md](docs/SANDBOX_SUMMARY.md) - Sandbox testing guide
 
 ## Testing
 
@@ -375,6 +376,23 @@ See [docs/TESTING.md](docs/TESTING.md) for the full testing guide.
 
 The [examples/](examples/) directory contains sample projects for testing:
 - [HelloWorld](examples/HelloWorld/) - Simple Xcode project for testing LLDB commands
+
+## Standalone Tools
+
+The [tools/](tools/) directory contains standalone utilities:
+
+### osbx-standalone - Sandbox Scanner
+
+A native binary for fast sandbox filesystem scanning (~50,000+ paths/sec vs ~300 paths/sec via LLDB).
+
+```bash
+cd tools/osbx-standalone
+make                                    # Build from source
+./osbx-standalone --profile permissive.sb /tmp /var  # Test with custom profile
+./sign-with-entitlements.sh /path/to/app.app         # Copy entitlements from app
+```
+
+See [tools/osbx-standalone/README.md](tools/osbx-standalone/README.md) and [docs/SANDBOX_SUMMARY.md](docs/SANDBOX_SUMMARY.md) for details.
 
 ## Configuring the LLM CLI Tool
 
@@ -558,4 +576,21 @@ Sending 54 lines of disassembly to Claude (explaining)...
 >> 5. `[greeter sayHello:@"LLDB"]` — second greeting
 
 [Claude responded in 14.2s]
+```
+
+## Note about sandbox_check
+
+This is testable via `python tests/test_bootstrap_osbx.py`
+
+```
+Can we go back to sandbox_check()?
+No. The parsing fix (GetSummary vs GetValueAsUnsigned) was a separate issue. The core problem is that sandbox_check() itself doesn't work from LLDB expressions:
+
+
+(lldb) expr (int)sandbox_check((pid_t)getpid(), "file-write-data", 1, "/private/tmp")
+(int) $0 = 1  # WRONG - returns "denied" even for allowed paths!
+
+(lldb) expr (int)access("/private/tmp", 2)  
+(int) $0 = 0  # CORRECT - allowed
+sandbox_check() always returns 1 (denied) when called via LLDB expression evaluation, regardless of actual sandbox policy. We must use access().
 ```

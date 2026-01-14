@@ -403,8 +403,6 @@ class TestFormatOutputJsonInterrupted:
     @pytest.mark.sandbox
     def test_json_includes_interrupted_true(self):
         """JSON output should include interrupted: true when set."""
-        output = format_output_json(
-            [], [], "macOS", None, None, False, 0, 0.1, "default", interrupted=True
-        )
+        output = format_output_json([], [], "macOS", None, None, False, 0, 0.1, "default", interrupted=True)
         data = json.loads(output)
         assert data["interrupted"] is True

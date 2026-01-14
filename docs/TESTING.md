@@ -59,8 +59,11 @@ tests/
 ├── test_osel_perf.py     # osel performance tests
 ├── test_timing.py        # Performance timing tests
 ├── test_bootstrap.py     # Interactive LLDB setup
+├── test_osbx.py          # osbx command tests
+├── test_osbx_sandboxed.py # osbx tests with sandboxed binary
 └── unit/
     ├── test_objc_core.py # objc_core.py tests
+    ├── test_objc_sandbox.py # sandbox utilities tests
     └── README.md
 ```
 
@@ -148,6 +151,22 @@ cd examples/HelloWorld && xcodebuild
 | `oprotos` | `test_oprotos.py` | 8 | Protocol conformance |
 | `hierarchy` | `test_hierarchy.py` | 7 | Hierarchy display |
 | `ivars_props` | `test_ivars_props.py` | 13 | Ivars/properties |
+| `osbx` | `test_osbx.py` | - | Sandbox scanner (basic) |
+| `osbx_sandboxed` | `test_osbx_sandboxed.py` | - | Sandbox scanner (sandboxed binary) |
+
+### Sandbox Tests
+
+The `test_osbx_sandboxed.py` test uses a special sandboxed binary that opts into a restrictive sandbox via `sandbox_init()`. This demonstrates sandbox detection limitations:
+
+```bash
+# Build the sandboxed test binary
+cd examples/HelloWorld-Sandboxed && make
+
+# Run the sandbox test
+python3 tests/test_osbx_sandboxed.py
+```
+
+**Important**: Due to how LLDB expression evaluation works, `sandbox_init()` sandboxes cannot be fully detected by osbx. The test validates that osbx runs correctly and produces valid output, but `sandbox_active` will be `false`. See [PITFALLS.md](PITFALLS.md) for details.
 
 ### Output Format (Pytest-Style)
 
@@ -316,8 +335,8 @@ passed, total = run_test_suite(
 cd examples/HelloWorld && xcodebuild
 ```
 
-**"IDSService not found"**
-The IDS.framework may not be available. Tests handle this gracefully.
+**"CSSymbol not found"**
+The CoreSymbolication.framework may not be available. Tests handle this gracefully.
 
 **Tests timing out**
 ```bash

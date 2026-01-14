@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Bootstrap script to launch LLDB with the HelloWorld binary and set up testing environment.
-Sets breakpoint on main, runs process, and loads IDS.framework.
+Sets breakpoint on main, runs process, and loads CoreSymbolication.framework.
 """
 
 from bootstrap_common import (

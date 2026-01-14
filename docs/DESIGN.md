@@ -159,10 +159,10 @@ Cache is invalidated on:
 
 #### Wildcard osel (Cross-Class Search)
 ```bash
-osel IDS* send*
-# Searches all classes matching IDS* for methods matching send*
-# -[IDSService sendMessage:]
-# -[IDSConnection sendAck:]
+osel CS* symbol*
+# Searches all classes matching CS* for methods matching symbol*
+# -[CSSymbolOwner symbolWithName:]
+# -[CSSymbolicator symbolOwnerForName:]
 # Total: 4 methods in 3 classes
 ```
 

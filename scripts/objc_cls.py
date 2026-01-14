@@ -7,20 +7,20 @@ Usage:
 
 Examples:
     ocls                       # List all classes (cached after first run)
-    ocls IDSService            # Exact match for "IDSService" class (fast-path)
-    ocls IDS*                  # All classes starting with "IDS" (wildcard)
+    ocls CSSymbol              # Exact match for "CSSymbol" class (fast-path)
+    ocls CS*                   # All classes starting with "CS" (wildcard)
     ocls *Service              # All classes ending with "Service" (wildcard)
     ocls *Navigation*          # All classes containing "Navigation" (wildcard)
     ocls _UI*                  # All private UIKit classes (wildcard)
     ocls --reload              # Force reload from runtime, refresh cache
-    ocls --reload IDS*         # Reload and filter
+    ocls --reload CS*          # Reload and filter
     ocls --clear-cache         # Clear cache for current process
-    ocls --verbose IDS*        # Show detailed timing breakdown
+    ocls --verbose CS*         # Show detailed timing breakdown
     ocls --ivars NSObject      # Show instance variables for NSObject
     ocls --properties UIView   # Show properties for UIView
     ocls --ivars --properties UIViewController  # Show both ivars and properties
     ocls --dylib *Foundation* NS*  # NS classes from Foundation framework only
-    ocls --dylib *IDS IDS*         # IDS classes from IDS.framework (fuzzy match)
+    ocls --dylib *CoreSymbolication* CS*  # CS classes from CoreSymbolication.framework (fuzzy match)
     ocls --dylib *CoreFoundation*  # All classes from CoreFoundation
 
 Pattern matching:
@@ -32,7 +32,7 @@ Dylib filtering (--dylib):
   - Filters results to only classes defined in dylibs matching the pattern
   - Supports wildcards (* and ?) for fuzzy matching (case-insensitive)
   - Matches against full dylib path (e.g., /System/Library/Frameworks/Foundation.framework/Foundation)
-  - Example: --dylib *IDS matches both "IDS.framework/IDS" and "/path/to/libIDS.dylib"
+  - Example: --dylib *CoreSymbolication* matches "CoreSymbolication.framework/CoreSymbolication"
 
 Performance:
   - Fast-path (exact match): <0.01 seconds (bypasses full enumeration)

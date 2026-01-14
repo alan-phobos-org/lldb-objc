@@ -21,7 +21,7 @@ Examples:
     owatch --minimal -[NSString description]
     owatch --once +[NSDate date]
     owatch --count=5 -[UIView layoutSubviews]
-    owatch --stack -[IDSService sendMessage:]
+    owatch --stack -[CSSymbolicator symbolicate:]
 """
 
 from __future__ import annotations

@@ -179,7 +179,7 @@ def matches_filter(path: str, filters: List[str]) -> bool:
 
     Args:
         path: The path to check
-        filters: List of glob or regex patterns
+        filters: List of glob or regex patterns (supports ** for recursive matching)
 
     Returns:
         True if path matches any filter (or if filters is empty)
@@ -188,10 +188,25 @@ def matches_filter(path: str, filters: List[str]) -> bool:
         return True  # No filter = match all
 
     for pattern in filters:
-        # Try glob first
-        if fnmatch.fnmatch(path, pattern):
-            return True
-        # Try regex
+        # Handle ** recursive glob by converting to regex
+        if "**" in pattern:
+            # Convert glob pattern to regex: ** matches any path segments
+            # Use placeholder to avoid * in .* being re-converted
+            regex_pattern = pattern.replace(".", r"\.")
+            regex_pattern = regex_pattern.replace("**", "\x00STARSTAR\x00")
+            regex_pattern = regex_pattern.replace("*", "[^/]*")
+            regex_pattern = regex_pattern.replace("\x00STARSTAR\x00", ".*")
+            regex_pattern = "^" + regex_pattern + "$"
+            try:
+                if re.match(regex_pattern, path):
+                    return True
+            except re.error:
+                pass
+        else:
+            # Try standard fnmatch glob
+            if fnmatch.fnmatch(path, pattern):
+                return True
+        # Try as regex pattern
         try:
             if re.match(pattern, path):
                 return True
@@ -207,14 +222,27 @@ def should_skip_path(path: str, ignore_patterns: List[str]) -> bool:
 
     Args:
         path: The path to check
-        ignore_patterns: List of glob or regex patterns to ignore
+        ignore_patterns: List of glob or regex patterns to ignore (supports **)
 
     Returns:
         True if path should be skipped
     """
     for pattern in ignore_patterns:
-        if fnmatch.fnmatch(path, pattern):
-            return True
+        # Handle ** recursive glob by converting to regex
+        if "**" in pattern:
+            # Use placeholder to avoid * in .* being re-converted
+            regex_pattern = pattern.replace(".", r"\.")
+            regex_pattern = regex_pattern.replace("**", "\x00STARSTAR\x00")
+            regex_pattern = regex_pattern.replace("*", "[^/]*")
+            regex_pattern = regex_pattern.replace("\x00STARSTAR\x00", ".*")
+            try:
+                if re.search(regex_pattern, path):
+                    return True
+            except re.error:
+                pass
+        else:
+            if fnmatch.fnmatch(path, pattern):
+                return True
         try:
             if re.search(pattern, path):
                 return True
@@ -438,18 +466,12 @@ class ScanLogger:
                 f.write(f"# Filter: {metadata['filter']}\n")
             duration = time.time() - self.start_time
             writable = sum(1 for e in self.entries if e["result"] == "writable")
-            f.write(
-                f"# Paths tested: {len(self.entries)}, Writable: {writable}, "
-                f"Duration: {duration:.2f}s\n"
-            )
+            f.write(f"# Paths tested: {len(self.entries)}, Writable: {writable}, Duration: {duration:.2f}s\n")
             f.write("PATH\tRESULT\tTYPE\tREASON\tDETAILS\n")
 
             # Entries
             for entry in self.entries:
-                f.write(
-                    f"{entry['path']}\t{entry['result']}\t{entry['type']}\t"
-                    f"{entry['reason']}\t{entry['details']}\n"
-                )
+                f.write(f"{entry['path']}\t{entry['result']}\t{entry['type']}\t{entry['reason']}\t{entry['details']}\n")
 
 
 def format_progress(
@@ -565,13 +587,16 @@ def is_sandboxed(frame) -> bool:
     """
     Check if process is running under sandbox.
 
+    Detects both App Sandbox (via container path) and sandbox_init() sandboxes
+    (by checking if write access to home directory is denied).
+
     Returns:
         True if sandboxed
     """
     if not lldb:
         return False
 
-    # Method 1: Check for sandbox container path pattern
+    # Method 1: Check for sandbox container path pattern (App Sandbox)
     home = get_container_path(frame)
     if home:
         if "/Library/Containers/" in home:
@@ -579,13 +604,17 @@ def is_sandboxed(frame) -> bool:
         if "/var/mobile/Containers/" in home:
             return True
 
-    # Method 2: Try sandbox_check for a known-denied path
-    # sandbox_check returns 0 if allowed, non-zero if denied
-    expr = '(int)sandbox_check(getpid(), "file-write-data", 1, "/System")'
-    result = frame.EvaluateExpression(expr)
-    if result.GetError().Success():
-        # Non-zero return means sandbox denied it (process is sandboxed)
-        return result.GetValueAsSigned() != 0
+    # Method 2: Check if write access to home directory is denied
+    # A non-sandboxed process should have write access to its home directory
+    # If access() returns -1, the sandbox is restricting access
+    # Note: access() works correctly from LLDB unlike sandbox_check()
+    if home:
+        escaped_home = escape_objc_string(home)
+        expr = f'(int)access("{escaped_home}", 2)'  # W_OK = 2
+        result = frame.EvaluateExpression(expr)
+        if result.GetError().Success():
+            # -1 means access denied (sandboxed)
+            return result.GetValueAsSigned() != 0
 
     return False
 
@@ -630,7 +659,11 @@ def check_path_type(frame, path: str) -> str:
 
 def batch_check_writable(frame, paths: List[str], batch_size: int = DEFAULT_BATCH_SIZE) -> Dict[str, bool]:
     """
-    Check writability of multiple paths in batched expressions.
+    Check writability of multiple paths using access() system call.
+
+    Uses access(path, W_OK) which properly respects sandbox_init() restrictions,
+    unlike NSFileManager's isWritableFileAtPath: which only checks Unix perms,
+    and unlike sandbox_check() which doesn't work reliably from LLDB expressions.
 
     Args:
         frame: LLDB SBFrame
@@ -638,7 +671,7 @@ def batch_check_writable(frame, paths: List[str], batch_size: int = DEFAULT_BATC
         batch_size: Number of paths per batch
 
     Returns:
-        Dict mapping path -> is_writable
+        Dict mapping path -> is_writable (True if writable)
     """
     if not lldb:
         return {}
@@ -652,14 +685,22 @@ def batch_check_writable(frame, paths: List[str], batch_size: int = DEFAULT_BATC
         escaped_paths = [escape_objc_string(p) for p in batch]
         path_array = ", ".join(f'@"{p}"' for p in escaped_paths)
 
+        # Use access() with W_OK (2) to check write permission
+        # access() properly respects sandbox restrictions from LLDB expressions
+        # Returns 0 if access is allowed, -1 if denied
+        # Note: Use index-based iteration (for-in doesn't work in LLDB blocks)
+        # Note: access() must be cast to (int) inside LLDB block expressions
         expr = f"""
         (NSArray *)^{{
-            NSFileManager *fm = [NSFileManager defaultManager];
             NSArray *paths = @[{path_array}];
             NSMutableArray *results = [NSMutableArray array];
-            for (NSString *path in paths) {{
-                BOOL writable = [fm isWritableFileAtPath:path];
-                [results addObject:@(writable)];
+            for (NSUInteger i = 0; i < [paths count]; i++) {{
+                NSString *path = paths[i];
+                // W_OK = 2 (check for write permission)
+                // Must cast access() return type for LLDB
+                int result = (int)access([path UTF8String], 2);
+                // access returns 0 if allowed
+                [results addObject:@(result == 0)];
             }}
             return results;
         }}()
@@ -668,10 +709,14 @@ def batch_check_writable(frame, paths: List[str], batch_size: int = DEFAULT_BATC
         result = frame.EvaluateExpression(expr)
         if result.GetError().Success():
             # Parse NSArray of NSNumber(BOOL) results
+            # Note: NSNumber bool values must be read via GetSummary() which returns "YES"/"NO"
+            # GetValueAsUnsigned() returns the NSNumber pointer address, not the bool value
             count = result.GetNumChildren()
             for j in range(min(count, len(batch))):
                 child = result.GetChildAtIndex(j)
-                is_writable = child.GetValueAsUnsigned() != 0
+                summary = child.GetSummary()
+                # Summary is "YES" or "NO" for NSNumber booleans
+                is_writable = summary == "YES"
                 results[batch[j]] = is_writable
         else:
             # Mark all as unknown/not writable on error
@@ -893,6 +938,41 @@ def osbx_command(
 
     # Parse arguments
     args = command.strip().split()
+
+    # Handle help flag
+    if "--help" in args or "-h" in args:
+        help_text = """osbx - Scan sandbox filesystem access
+
+Usage: osbx [options] [path_prefix]
+
+Options:
+    --quick, -q       Test only most common paths (~10 paths)
+    --thorough, -t    Deep scan with subdirectory enumeration
+    --verbose, -v     Show all paths tested, not just writable ones
+    --json            Output in JSON format for scripting
+    --filter PATTERN  Only test paths matching glob/regex pattern
+    --ignore PATTERN  Skip paths matching glob/regex pattern
+    --no-default-ignore  Don't apply default ignore patterns
+    --output FILE     Write results to file instead of stdout
+    --log FILE        Write detailed per-path check log (TSV format)
+    --max-paths N     Stop after testing N paths (default: 500)
+    --max-depth N     Maximum directory depth for --thorough (default: 2)
+    --no-progress     Disable progress indicator
+
+Arguments:
+    path_prefix       Only test paths starting with this prefix
+
+Examples:
+    osbx                      # Default scan of interesting paths
+    osbx --quick              # Fastest scan (~10 paths)
+    osbx --thorough           # Deep scan with subdirectory enumeration
+    osbx /var                 # Only test paths under /var
+    osbx --filter "/tmp/**"   # Only test paths under /tmp
+    osbx --json               # JSON output for scripting
+"""
+        print(help_text)
+        return
+
     quick = "--quick" in args or "-q" in args
     thorough = "--thorough" in args or "-t" in args
     verbose = "--verbose" in args or "-v" in args
@@ -909,19 +989,25 @@ def osbx_command(
     max_paths = THOROUGH_MAX_PATHS if thorough else DEFAULT_MAX_PATHS
     max_depth = THOROUGH_MAX_DEPTH if thorough else DEFAULT_MAX_DEPTH
 
+    def strip_quotes(s: str) -> str:
+        """Strip surrounding quotes from a string."""
+        if len(s) >= 2 and ((s[0] == '"' and s[-1] == '"') or (s[0] == "'" and s[-1] == "'")):
+            return s[1:-1]
+        return s
+
     i = 0
     while i < len(args):
         arg = args[i]
         if arg == "--filter" and i + 1 < len(args):
-            filters.append(args[i + 1])
+            filters.append(strip_quotes(args[i + 1]))
             i += 1
         elif arg.startswith("--filter="):
-            filters.append(arg.split("=", 1)[1])
+            filters.append(strip_quotes(arg.split("=", 1)[1]))
         elif arg == "--ignore" and i + 1 < len(args):
-            ignores.append(args[i + 1])
+            ignores.append(strip_quotes(args[i + 1]))
             i += 1
         elif arg.startswith("--ignore="):
-            ignores.append(arg.split("=", 1)[1])
+            ignores.append(strip_quotes(arg.split("=", 1)[1]))
         elif arg == "--output" and i + 1 < len(args):
             output_file = args[i + 1]
             i += 1
@@ -955,7 +1041,7 @@ def osbx_command(
             except ValueError:
                 pass
         elif not arg.startswith("-") and not path_prefix:
-            path_prefix = arg
+            path_prefix = strip_quotes(arg)
         i += 1
 
     # Quick mode overrides thorough
@@ -1019,7 +1105,6 @@ def osbx_command(
     # Test writability with progress
     writable_paths = []
     denied_paths = []
-    writable_count = 0
     last_progress_time = time.time()
 
     # Process paths in batches for writability check
