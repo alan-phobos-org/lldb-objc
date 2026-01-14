@@ -44,6 +44,7 @@ Commands that feel like native debugger features, not bolted-on scripts. Output 
 | `oinstance` | Inspect object | `oinstance $0` |
 | `oexplain` | Explain disassembly | `oexplain $pc` |
 | `odecompile` | Decompile function | `odecompile $pc` |
+| `osbx` | Scan sandbox writable paths | `osbx --quick` |
 | `oreload` | Reload commands | `oreload` |
 
 ## Workflows

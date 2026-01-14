@@ -42,6 +42,7 @@ COMMAND_MODULES = [
     ".objc_instance",
     ".objc_explain",
     ".objc_decompile",
+    ".objc_sandbox",
 ]
 
 # Track loaded modules for reloading
