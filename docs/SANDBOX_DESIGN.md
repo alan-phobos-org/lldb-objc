@@ -294,6 +294,8 @@ Options:
   --output FILE     Write results to file instead of stdout
   --verbose, -v     Show all paths tested, not just writable ones
   --json            Output in JSON format for scripting
+  --filter PATTERN  Only test paths matching glob/regex pattern (e.g., "/var/**", ".*Library.*")
+  --log FILE        Write detailed per-path check log to file (path, result, reason)
 
 Arguments:
   path_prefix       Only test paths starting with this prefix (e.g., /var)
@@ -304,6 +306,115 @@ Examples:
   osbx /var                 # Only test paths under /var
   osbx --thorough           # Deep scan with subdirectory enumeration
   osbx --output writable.txt --json  # Save JSON results
+  osbx --filter "/tmp/**"   # Only test paths under /tmp
+  osbx --filter ".*Caches.*"  # Only test paths containing "Caches"
+  osbx --log scan.log       # Save detailed check log for debugging
+  osbx --log scan.log --filter "/var/**" --thorough  # Filtered thorough scan with logging
+```
+
+### Filter Option (`--filter`)
+
+The `--filter` option restricts scanning to a subset of paths, useful for:
+- Faster targeted scans
+- Debugging specific directories
+- Testing hypothesis about specific paths
+
+**Filter syntax:**
+- Glob patterns: `/var/**`, `/tmp/*`, `~/Library/Caches/*`
+- Regex patterns: `.*Library.*`, `^/var/mobile/.*`
+- Multiple filters: `--filter "/tmp/**" --filter "/var/tmp/**"` (OR logic)
+
+```python
+import fnmatch
+import re
+
+def matches_filter(path: str, filters: List[str]) -> bool:
+    """Check if path matches any of the filter patterns."""
+    if not filters:
+        return True  # No filter = match all
+
+    for pattern in filters:
+        # Try glob first
+        if fnmatch.fnmatch(path, pattern):
+            return True
+        # Try regex
+        try:
+            if re.match(pattern, path):
+                return True
+        except re.error:
+            pass  # Invalid regex, skip
+
+    return False
+```
+
+### Detailed Log Option (`--log`)
+
+The `--log` option writes a comprehensive per-path check log for debugging and analysis.
+
+**Log format (TSV):**
+```
+# osbx scan log - 2024-01-15T10:30:00Z
+# Platform: macOS, Container: /Users/test/Library/Containers/com.example.app/Data
+# Filter: /var/**
+# Paths tested: 47, Writable: 7, Duration: 0.12s
+PATH	RESULT	TYPE	REASON	DETAILS
+/var/tmp	writable	directory	-	-
+/var/log	not_writable	directory	permission_denied	NSCocoaErrorDomain:257
+/var/folders/xx/xxx/T	writable	directory	-	symlink_target=/private/var/folders/xx/xxx/T
+/System	not_writable	directory	sip_protected	-
+/var/mobile/Library/SMS	not_writable	directory	sandbox_denied	sandbox_check returned 1
+/dev/null	writable	device	-	special_file
+/nonexistent	skipped	-	not_found	NSCocoaErrorDomain:260
+```
+
+**Log reasons:**
+| Reason | Description |
+|--------|-------------|
+| `-` | Path is writable, no restriction |
+| `permission_denied` | POSIX permission denied (NSCocoaErrorDomain:257) |
+| `sandbox_denied` | Sandbox policy blocked access |
+| `sip_protected` | System Integrity Protection (macOS) |
+| `not_found` | Path does not exist |
+| `timeout` | Expression evaluation timed out |
+| `symlink_dangling` | Symlink target does not exist |
+| `unknown_error` | Unexpected error during check |
+
+```python
+class ScanLogger:
+    """Writes detailed per-path check log."""
+
+    def __init__(self, log_path: str):
+        self.log_path = log_path
+        self.entries: List[Dict] = []
+        self.start_time = time.time()
+
+    def log_check(self, path: str, result: str, path_type: str,
+                  reason: str, details: str = "-"):
+        """Record a single path check result."""
+        self.entries.append({
+            "path": path,
+            "result": result,  # writable, not_writable, skipped, error
+            "type": path_type,  # directory, file, device, symlink, unknown
+            "reason": reason,
+            "details": details,
+        })
+
+    def write(self, metadata: Dict):
+        """Write log file with header and entries."""
+        with open(self.log_path, 'w') as f:
+            # Header
+            f.write(f"# osbx scan log - {datetime.utcnow().isoformat()}Z\n")
+            f.write(f"# Platform: {metadata['platform']}, Container: {metadata['container']}\n")
+            if metadata.get('filter'):
+                f.write(f"# Filter: {metadata['filter']}\n")
+            duration = time.time() - self.start_time
+            writable = sum(1 for e in self.entries if e['result'] == 'writable')
+            f.write(f"# Paths tested: {len(self.entries)}, Writable: {writable}, Duration: {duration:.2f}s\n")
+            f.write("PATH\tRESULT\tTYPE\tREASON\tDETAILS\n")
+
+            # Entries
+            for entry in self.entries:
+                f.write(f"{entry['path']}\t{entry['result']}\t{entry['type']}\t{entry['reason']}\t{entry['details']}\n")
 ```
 
 ### Core Implementation
@@ -923,6 +1034,309 @@ Extensions are challenging to detect because:
 
 ## Testing Strategy
 
+### Sandboxed Test Binary
+
+To enable predictable sandbox testing, we build a variant of the `helloworld` test binary that opts into a known sandbox profile. This provides deterministic expected results for integration tests.
+
+#### Test Binary: `helloworld_sandboxed`
+
+**Location:** `testbins/helloworld_sandboxed/`
+
+**Sandbox Profile:** `testbins/helloworld_sandboxed/sandbox.sb`
+```scheme
+;; Minimal sandbox profile for osbx testing
+;; Predictable: allows specific paths, denies others
+
+(version 1)
+(deny default)
+
+;; Allow basic process execution
+(allow process-exec*)
+(allow process-fork)
+(allow signal)
+(allow sysctl-read)
+
+;; Allow reading system libraries and frameworks
+(allow file-read*
+    (subpath "/usr/lib")
+    (subpath "/System/Library/Frameworks")
+    (subpath "/System/Library/PrivateFrameworks")
+    (subpath "/Library/Frameworks"))
+
+;; Allow reading /dev for special files
+(allow file-read* (subpath "/dev"))
+(allow file-write* (literal "/dev/null"))
+(allow file-write* (literal "/dev/zero"))
+
+;; WRITABLE: Specific test directories (created by test harness)
+(allow file-read* file-write*
+    (subpath (param "SANDBOX_WRITABLE_DIR")))
+
+;; WRITABLE: System temp (for realistic sandbox behavior)
+(allow file-read* file-write*
+    (subpath "/private/tmp/osbx_test"))
+
+;; READABLE but not writable: test read-only directory
+(allow file-read*
+    (subpath (param "SANDBOX_READONLY_DIR")))
+
+;; DENIED: Everything else (default deny)
+```
+
+**Source:** `testbins/helloworld_sandboxed/main.m`
+```objective-c
+// helloworld_sandboxed - Test binary with predictable sandbox profile
+
+#import <Foundation/Foundation.h>
+#include <sandbox.h>
+
+int main(int argc, char *argv[]) {
+    @autoreleasepool {
+        // Read sandbox profile path from environment or use default
+        NSString *profilePath = [[NSProcessInfo processInfo] environment][@"SANDBOX_PROFILE"];
+        if (!profilePath) {
+            profilePath = @"sandbox.sb";
+        }
+
+        // Read sandbox parameters from environment
+        NSString *writableDir = [[NSProcessInfo processInfo] environment][@"SANDBOX_WRITABLE_DIR"]
+                                ?: @"/tmp/osbx_test_writable";
+        NSString *readonlyDir = [[NSProcessInfo processInfo] environment][@"SANDBOX_READONLY_DIR"]
+                                ?: @"/tmp/osbx_test_readonly";
+
+        // Load and apply sandbox profile
+        NSString *profile = [NSString stringWithContentsOfFile:profilePath
+                                                     encoding:NSUTF8StringEncoding
+                                                        error:nil];
+        if (profile) {
+            const char *params[] = {
+                "SANDBOX_WRITABLE_DIR", [writableDir UTF8String],
+                "SANDBOX_READONLY_DIR", [readonlyDir UTF8String],
+                NULL
+            };
+
+            char *error = NULL;
+            if (sandbox_init_with_parameters([profile UTF8String], 0, params, &error) != 0) {
+                NSLog(@"Sandbox init failed: %s", error ? error : "unknown");
+                sandbox_free_error(error);
+                return 1;
+            }
+            NSLog(@"Sandbox initialized with profile: %@", profilePath);
+        } else {
+            NSLog(@"Warning: No sandbox profile loaded, running unsandboxed");
+        }
+
+        // Stay alive for LLDB to attach
+        NSLog(@"helloworld_sandboxed ready (PID: %d)", getpid());
+        NSLog(@"Writable: %@", writableDir);
+        NSLog(@"Readonly: %@", readonlyDir);
+
+        // Wait for debugger
+        [[NSRunLoop currentRunLoop] run];
+    }
+    return 0;
+}
+```
+
+**Build Configuration:** `testbins/helloworld_sandboxed/Makefile`
+```makefile
+# Build sandboxed test binary for osbx testing
+
+BINARY = helloworld_sandboxed
+SOURCES = main.m
+FRAMEWORKS = -framework Foundation
+CFLAGS = -arch arm64 -arch x86_64 -mmacosx-version-min=12.0
+
+all: $(BINARY)
+
+$(BINARY): $(SOURCES)
+	clang $(CFLAGS) $(FRAMEWORKS) -o $@ $<
+
+clean:
+	rm -f $(BINARY)
+
+.PHONY: all clean
+```
+
+#### Test Harness Setup
+
+```python
+# tests/conftest.py additions
+
+import os
+import tempfile
+import shutil
+import subprocess
+
+@pytest.fixture
+def sandboxed_test_dirs():
+    """Create test directories with known permissions."""
+    base = tempfile.mkdtemp(prefix="osbx_test_")
+    writable = os.path.join(base, "writable")
+    readonly = os.path.join(base, "readonly")
+
+    os.makedirs(writable)
+    os.makedirs(readonly)
+
+    # Create test files
+    open(os.path.join(writable, "test.txt"), 'w').close()
+    open(os.path.join(readonly, "test.txt"), 'w').close()
+
+    # Make readonly actually read-only
+    os.chmod(readonly, 0o555)
+    os.chmod(os.path.join(readonly, "test.txt"), 0o444)
+
+    # Also create the /private/tmp/osbx_test directory (profile expects it)
+    os.makedirs("/private/tmp/osbx_test", exist_ok=True)
+
+    yield {
+        "base": base,
+        "writable": writable,
+        "readonly": readonly,
+        "system_writable": "/private/tmp/osbx_test",
+    }
+
+    # Cleanup
+    os.chmod(readonly, 0o755)  # Restore permissions for deletion
+    shutil.rmtree(base, ignore_errors=True)
+    shutil.rmtree("/private/tmp/osbx_test", ignore_errors=True)
+
+@pytest.fixture
+def sandboxed_lldb_session(sandboxed_test_dirs):
+    """Launch sandboxed test binary and attach LLDB."""
+    env = os.environ.copy()
+    env["SANDBOX_WRITABLE_DIR"] = sandboxed_test_dirs["writable"]
+    env["SANDBOX_READONLY_DIR"] = sandboxed_test_dirs["readonly"]
+    env["SANDBOX_PROFILE"] = "testbins/helloworld_sandboxed/sandbox.sb"
+
+    # Launch the sandboxed binary
+    proc = subprocess.Popen(
+        ["testbins/helloworld_sandboxed/helloworld_sandboxed"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    # Attach LLDB
+    session = LLDBTestSession()
+    session.attach(proc.pid)
+
+    yield session, sandboxed_test_dirs
+
+    # Cleanup
+    session.detach()
+    proc.terminate()
+    proc.wait()
+```
+
+#### Bootstrap Integration Tests
+
+```python
+# tests/test_osbx_sandboxed.py
+
+"""Integration tests for osbx using sandboxed test binary."""
+
+import json
+
+class TestOsbxSandboxed:
+    """Test osbx command with predictable sandbox environment."""
+
+    def test_sandbox_detection(self, sandboxed_lldb_session):
+        """Verify osbx detects sandboxed process."""
+        session, dirs = sandboxed_lldb_session
+        output = session.run_command("osbx --quick --json")
+        data = json.loads(output)
+        assert data["sandbox_active"] is True
+
+    def test_expected_writable_paths(self, sandboxed_lldb_session):
+        """Verify expected paths are reported as writable."""
+        session, dirs = sandboxed_lldb_session
+        output = session.run_command(f"osbx --filter '{dirs['writable']}/**' --json")
+        data = json.loads(output)
+
+        writable_paths = [p["path"] for p in data["writable_paths"]]
+        assert dirs["writable"] in writable_paths or \
+               any(p.startswith(dirs["writable"]) for p in writable_paths)
+
+    def test_expected_denied_paths(self, sandboxed_lldb_session):
+        """Verify read-only paths are NOT writable."""
+        session, dirs = sandboxed_lldb_session
+        output = session.run_command(f"osbx --filter '{dirs['readonly']}/**' --json")
+        data = json.loads(output)
+
+        writable_paths = [p["path"] for p in data["writable_paths"]]
+        # Read-only dir should NOT appear in writable paths
+        assert dirs["readonly"] not in writable_paths
+        assert not any(p.startswith(dirs["readonly"]) for p in writable_paths)
+
+    def test_system_paths_denied(self, sandboxed_lldb_session):
+        """Verify system paths are denied by sandbox."""
+        session, dirs = sandboxed_lldb_session
+        output = session.run_command("osbx --filter '/System/**' --json")
+        data = json.loads(output)
+
+        # /System should be denied
+        assert len(data["writable_paths"]) == 0
+        denied_paths = [p["path"] for p in data["denied_paths"]]
+        assert "/System" in denied_paths or "/System/" in denied_paths
+
+    def test_dev_null_writable(self, sandboxed_lldb_session):
+        """Verify /dev/null is writable (profile allows it)."""
+        session, dirs = sandboxed_lldb_session
+        output = session.run_command("osbx --filter '/dev/null' --json")
+        data = json.loads(output)
+
+        writable_paths = [p["path"] for p in data["writable_paths"]]
+        assert "/dev/null" in writable_paths
+
+    def test_filter_narrows_scan(self, sandboxed_lldb_session):
+        """Verify --filter reduces paths tested."""
+        session, dirs = sandboxed_lldb_session
+
+        # Full scan
+        full_output = session.run_command("osbx --json")
+        full_data = json.loads(full_output)
+
+        # Filtered scan
+        filtered_output = session.run_command(f"osbx --filter '{dirs['writable']}/**' --json")
+        filtered_data = json.loads(filtered_output)
+
+        assert filtered_data["tested_count"] < full_data["tested_count"]
+
+    def test_log_output(self, sandboxed_lldb_session, tmp_path):
+        """Verify --log produces detailed output."""
+        session, dirs = sandboxed_lldb_session
+        log_path = tmp_path / "scan.log"
+
+        session.run_command(f"osbx --log {log_path}")
+
+        assert log_path.exists()
+        content = log_path.read_text()
+
+        # Verify log format
+        assert "PATH\tRESULT\tTYPE\tREASON\tDETAILS" in content
+        assert "# osbx scan log" in content
+
+        # Verify entries exist
+        lines = [l for l in content.split('\n') if l and not l.startswith('#')]
+        assert len(lines) > 1  # Header + at least one entry
+
+    def test_log_with_filter(self, sandboxed_lldb_session, tmp_path):
+        """Verify --log respects --filter."""
+        session, dirs = sandboxed_lldb_session
+        log_path = tmp_path / "scan.log"
+
+        session.run_command(f"osbx --filter '/tmp/**' --log {log_path}")
+
+        content = log_path.read_text()
+        # All non-header lines should have paths starting with /tmp or /private/tmp
+        for line in content.split('\n'):
+            if line and not line.startswith('#') and not line.startswith('PATH'):
+                path = line.split('\t')[0]
+                assert path.startswith('/tmp') or path.startswith('/private/tmp'), \
+                    f"Path {path} doesn't match filter /tmp/**"
+```
+
 ### Unit Tests (pytest)
 ```python
 # tests/unit/test_objc_sandbox.py
@@ -937,6 +1351,23 @@ def test_batch_expression_building():
     expr = build_batch_check_expression(["/tmp", "/var"])
     assert "@\"/tmp\"" in expr
     assert "@\"/var\"" in expr
+
+def test_filter_matching_glob():
+    """Test glob pattern matching."""
+    assert matches_filter("/tmp/foo", ["/tmp/**"])
+    assert matches_filter("/tmp/bar/baz", ["/tmp/**"])
+    assert not matches_filter("/var/tmp", ["/tmp/**"])
+
+def test_filter_matching_regex():
+    """Test regex pattern matching."""
+    assert matches_filter("/var/mobile/Library/Caches", [".*Caches.*"])
+    assert not matches_filter("/var/mobile/Documents", [".*Caches.*"])
+
+def test_filter_multiple():
+    """Test multiple filter patterns (OR logic)."""
+    assert matches_filter("/tmp/foo", ["/tmp/**", "/var/**"])
+    assert matches_filter("/var/bar", ["/tmp/**", "/var/**"])
+    assert not matches_filter("/System/foo", ["/tmp/**", "/var/**"])
 ```
 
 ### Integration Tests
@@ -966,17 +1397,25 @@ def test_osbx_container_resolution(lldb_session):
 
 ## Implementation Plan
 
+### Phase 0: Test Infrastructure
+1. Build `helloworld_sandboxed` test binary with predictable sandbox profile
+2. Create sandbox profile (`sandbox.sb`) with known writable/denied paths
+3. Set up test fixtures for sandboxed LLDB sessions
+4. Bootstrap integration tests that verify sandbox detection
+
 ### Phase 1: Core Functionality
 1. Implement path list generation with platform detection
 2. Implement batched `isWritableFileAtPath:` testing
 3. Basic output formatting (human-readable)
-4. Unit tests for path generation and expression building
+4. Implement `--filter` option for path pattern matching
+5. Unit tests for path generation, expression building, and filter matching
 
 ### Phase 2: Enhanced Features
 1. Add `--json` output format
 2. Add `--thorough` mode with subdirectory enumeration
 3. Add `--quick` mode with reduced path list
-4. Integration tests
+4. Add `--log` detailed logging output
+5. Integration tests with sandboxed binary
 
 ### Phase 3: Advanced Features
 1. Add `--sandbox-only` mode with `sandbox_check()`
@@ -989,6 +1428,7 @@ def test_osbx_container_resolution(lldb_session):
 2. Documentation (README, help text)
 3. Edge case handling
 4. Security review
+5. CI integration for sandboxed tests
 
 ---
 
