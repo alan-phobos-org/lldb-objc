@@ -177,6 +177,90 @@ sandbox_check(getpid(), "file-write-data",
 
 ---
 
+### Decision 1b: Fast C-Based Testing Alternative
+
+For scenarios requiring maximum speed or minimal Objective-C runtime involvement, consider a pure C implementation:
+
+#### Option D: Batched C Syscalls via Expression
+
+```c
+// Inject fast C code that tests multiple paths without ObjC overhead
+(long long)^{
+    const char *paths[] = {"/tmp", "/var/tmp", "/System", "/usr"};
+    int count = 4;
+    long long results = 0;  // Bitmap of writable paths
+
+    for (int i = 0; i < count; i++) {
+        if (access(paths[i], W_OK) == 0) {
+            results |= (1LL << i);
+        }
+    }
+    return results;
+}()
+```
+
+**Pros:**
+- 5-10x faster than NSFileManager batching
+- No Objective-C runtime overhead
+- Works even if ObjC runtime is in inconsistent state
+- Simple bitmap result parsing
+
+**Cons:**
+- Limited to ~60 paths per call (64-bit bitmap)
+- `access()` may not catch all sandbox restrictions
+- Less readable output (need bit parsing)
+
+#### Option E: Hybrid Fast Check with Fallback
+
+```python
+def batch_check_writable_fast(frame, paths: List[str]) -> Dict[str, bool]:
+    """
+    Fast C-based writability check with fallback to NSFileManager.
+
+    Uses access() syscall for speed, falls back to isWritableFileAtPath:
+    for paths where access() might be inaccurate.
+    """
+    results = {}
+
+    # Fast path: batch access() calls
+    for i in range(0, len(paths), 60):  # 60 paths per batch (bitmap limit)
+        batch = paths[i:i + 60]
+        path_array = ', '.join(f'"{p}"' for p in batch)
+
+        expr = f'''
+        (long long)^{{
+            const char *paths[] = {{{path_array}}};
+            long long results = 0;
+            for (int i = 0; i < {len(batch)}; i++) {{
+                if (access(paths[i], W_OK) == 0) results |= (1LL << i);
+            }}
+            return results;
+        }}()
+        '''
+
+        result = frame.EvaluateExpression(expr)
+        if result.GetError().Success():
+            bitmap = result.GetValueAsUnsigned()
+            for j, path in enumerate(batch):
+                results[path] = bool(bitmap & (1 << j))
+
+    return results
+```
+
+**When to use fast C-based checking:**
+- Very large path lists (>1000 paths)
+- Time-critical operations
+- When ObjC runtime may be compromised
+- `--fast` mode flag
+
+**When to use NSFileManager:**
+- Default mode (most accurate)
+- When sandbox extensions matter
+- When ACLs/extended attributes affect access
+- Security-critical audits
+
+---
+
 ### Decision 2: Path Enumeration Strategy
 
 #### Option A: Full Recursive Enumeration
@@ -1553,6 +1637,313 @@ def test_osbx_container_resolution(lldb_session):
     """Test that container paths are resolved."""
     output = run_command("osbx --verbose")
     assert "{{CONTAINER}}" not in output
+```
+
+---
+
+## iOS Remote Debugging Considerations
+
+When debugging iOS apps remotely via USB/network, the testing infrastructure faces unique challenges that differ significantly from macOS.
+
+### The Folder Structure Problem
+
+**On macOS testing:**
+- Test harness can create directories anywhere (`/tmp/osbx_test_writable/`, etc.)
+- Can apply sandbox profiles via `sandbox-exec` or `sandbox_init_with_parameters()`
+- Full filesystem control for predictable test setup
+
+**On iOS remote debugging:**
+- **No shell access**: Cannot run `mkdir` or create directories on the device
+- **No `sandbox-exec`**: This utility doesn't exist on iOS
+- **App-scoped filesystem**: Only the debugged app's container is accessible
+- **No runtime sandbox APIs**: `sandbox_init()` is restricted to Apple platform binaries
+- **Entitlement-based sandbox**: iOS apps get sandbox policy from kernel based on embedded entitlements, not runtime configuration
+
+### iOS Testing Strategies
+
+#### Strategy 1: In-Process Test Directory Creation (Recommended for CI)
+
+Create test directories within the app's container using injected LLDB expressions:
+
+```objective-c
+// Injected via LLDB to set up test structure within app container
+(NSDictionary *)^{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *container = NSHomeDirectory();
+    NSString *testDir = [container stringByAppendingPathComponent:@"osbx_test"];
+    NSError *error = nil;
+
+    // Create writable test directory
+    NSString *writable = [testDir stringByAppendingPathComponent:@"writable"];
+    [fm createDirectoryAtPath:writable
+  withIntermediateDirectories:YES
+                   attributes:nil
+                        error:&error];
+
+    // Create read-only directory (set permissions after creation)
+    NSString *readonly = [testDir stringByAppendingPathComponent:@"readonly"];
+    [fm createDirectoryAtPath:readonly
+  withIntermediateDirectories:YES
+                   attributes:nil
+                        error:nil];
+
+    // Make readonly directory actually read-only
+    [fm setAttributes:@{NSFilePosixPermissions: @0555}
+         ofItemAtPath:readonly
+                error:nil];
+
+    return @{
+        @"testDir": testDir,
+        @"writable": writable,
+        @"readonly": readonly,
+        @"error": error ? [error localizedDescription] : [NSNull null]
+    };
+}()
+```
+
+**Cleanup after test:**
+```objective-c
+// Remove test directories
+(BOOL)^{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *testDir = [NSHomeDirectory() stringByAppendingPathComponent:@"osbx_test"];
+
+    // Restore permissions so we can delete
+    NSString *readonly = [testDir stringByAppendingPathComponent:@"readonly"];
+    [fm setAttributes:@{NSFilePosixPermissions: @0755}
+         ofItemAtPath:readonly
+                error:nil];
+
+    return [fm removeItemAtPath:testDir error:nil];
+}()
+```
+
+**Pros:**
+- Works on iOS device via remote debugging
+- No external setup required
+- Self-contained within debugged process
+- Tests actual iOS sandbox behavior
+
+**Cons:**
+- Limited to testing within app container
+- Cannot test paths outside sandbox (e.g., `/var/mobile/Library/SMS/`)
+- Test cleanup could fail on crash
+
+#### Strategy 2: Dedicated iOS Test App
+
+Build a dedicated iOS app with specific entitlements for predictable test results:
+
+```xml
+<!-- TestApp.entitlements -->
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.com.lldb-objc.osbx-test</string>
+    </array>
+</dict>
+</plist>
+```
+
+**Known writable paths with this entitlement:**
+- `{{CONTAINER}}/Documents/` - always writable
+- `{{CONTAINER}}/Library/` - always writable
+- `{{CONTAINER}}/tmp/` - always writable
+- `/var/mobile/Containers/Shared/AppGroup/group.com.lldb-objc.osbx-test/` - writable
+
+**Known denied paths:**
+- `/var/mobile/Library/SMS/` - sandbox denied
+- `/System/` - SIP protected
+- `/private/var/Keychains/` - sandbox denied
+
+**Pros:**
+- Real iOS sandbox behavior
+- Predictable test results based on known entitlements
+- Tests actual production scenarios
+
+**Cons:**
+- Requires deploying app to device (code signing, provisioning profile)
+- More complex CI setup
+- Needs device farm or local iOS device
+
+#### Strategy 3: Expected Behavior Validation (No Setup Required)
+
+For iOS, validate against expected behavior without creating test directories:
+
+```python
+# iOS expected results (no setup required)
+IOS_EXPECTED_WRITABLE = [
+    "{{CONTAINER}}/Documents",
+    "{{CONTAINER}}/Library",
+    "{{CONTAINER}}/tmp",
+    "/dev/null",
+    "/dev/zero",
+]
+
+IOS_EXPECTED_DENIED = [
+    "/System",
+    "/usr",
+    "/bin",
+    "/var/mobile/Library/SMS",
+    "/private/var/Keychains",
+]
+
+def test_ios_expected_results(session, container):
+    """Verify iOS sandbox matches expected behavior."""
+    results = session.run_command("osbx --json")
+    data = json.loads(results)
+
+    writable = {p["path"] for p in data["writable_paths"]}
+
+    # Container paths should be writable
+    for expected in IOS_EXPECTED_WRITABLE:
+        path = expected.replace("{{CONTAINER}}", container)
+        assert path in writable or any(w.startswith(path) for w in writable), \
+            f"Expected {path} to be writable"
+
+    # System paths should be denied (not in writable list)
+    for denied in IOS_EXPECTED_DENIED:
+        assert denied not in writable, f"Expected {denied} to be denied"
+```
+
+**Pros:**
+- No setup required
+- Works on any iOS device
+- Tests real-world sandbox behavior
+
+**Cons:**
+- Cannot test edge cases or custom scenarios
+- App Group paths vary by app
+
+### Alternative: Fast C-Based Sandbox Testing
+
+Instead of relying on NSFileManager (Objective-C overhead), inject fast C code for testing:
+
+#### Option A: Direct `access()` syscall
+
+```c
+// Minimal overhead writability check
+(int)access("/path/to/test", W_OK)
+// Returns 0 if writable, -1 if not
+```
+
+**Pros:**
+- Very fast (no ObjC runtime)
+- Available on both macOS and iOS
+- Direct kernel interaction
+
+**Cons:**
+- Tests POSIX permissions, may miss some sandbox nuances
+- Returns -1 for both "doesn't exist" and "not writable"
+
+#### Option B: `sandbox_check()` Private API
+
+```c
+// Pure sandbox policy check without filesystem access
+// Signature: int sandbox_check(pid_t pid, const char *operation, int type, ...)
+// SANDBOX_FILTER_PATH = 1
+// SANDBOX_CHECK_NO_REPORT = 0x40 (suppress violation logs)
+
+(int)sandbox_check(getpid(), "file-write-data", (1 | 0x40), "/var/mobile/Library/SMS")
+// Returns 0 if sandbox allows, non-zero if denied
+```
+
+**Pros:**
+- Tests sandbox policy directly, no side effects
+- No actual filesystem access attempted
+- `SANDBOX_CHECK_NO_REPORT` suppresses violation logging
+- Works on iOS (verified available in libsystem_sandbox.dylib)
+
+**Cons:**
+- Private API, may change between OS versions
+- Only tests sandbox, not POSIX permissions
+- Need dynamic symbol lookup or direct call
+
+#### Option C: Combined Check (Recommended for `--sandbox-only` mode)
+
+```c
+// Batch sandbox check for multiple paths
+(NSArray *)^{
+    NSArray *paths = @[@"/var/mobile/Library/SMS", @"/tmp", @"/System"];
+    NSMutableArray *results = [NSMutableArray array];
+    pid_t pid = getpid();
+
+    for (NSString *path in paths) {
+        // SANDBOX_FILTER_PATH | SANDBOX_CHECK_NO_REPORT
+        int result = sandbox_check(pid, "file-write-data", (1 | 0x40), [path UTF8String]);
+        [results addObject:@{
+            @"path": path,
+            @"sandbox_allows": @(result == 0),
+            @"result_code": @(result)
+        }];
+    }
+    return results;
+}()
+```
+
+### iOS vs macOS Testing Matrix
+
+| Feature | macOS | iOS Device | iOS Simulator |
+|---------|-------|------------|---------------|
+| `sandbox_init()` | ✓ | ✗ (restricted) | ✗ (restricted) |
+| `sandbox_check()` | ✓ | ✓ | ✓ |
+| Create test dirs anywhere | ✓ | ✗ | ✓ (simulated fs) |
+| Create dirs in container | ✓ | ✓ | ✓ |
+| Test `/System` denied | ✓ | ✓ | ✓ |
+| Test `/var/mobile/*` | N/A | ✓ | ✓ |
+| Custom sandbox profile | ✓ | ✗ | ✗ |
+| `access(W_OK)` | ✓ | ✓ | ✓ |
+| NSFileManager | ✓ | ✓ | ✓ |
+
+### Recommended iOS Testing Approach
+
+1. **Unit tests** (pure Python): Run on any platform, no device needed
+2. **macOS integration tests**: Use `helloworld_sandboxed` with custom profile
+3. **iOS Simulator tests**: Create test dirs in simulator's filesystem
+4. **iOS device tests**: Use Strategy 1 (in-process test dirs) + Strategy 3 (expected behavior)
+
+### Implementation for iOS Test Fixture
+
+```python
+# tests/conftest.py - iOS-aware fixture
+
+@pytest.fixture
+def ios_test_dirs(lldb_session):
+    """Create test directories within iOS app container."""
+    frame = lldb_session.get_frame()
+
+    # Create test structure via injected expression
+    setup_expr = '''
+    (NSDictionary *)^{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *base = [NSHomeDirectory() stringByAppendingPathComponent:@"osbx_test"];
+        NSString *writable = [base stringByAppendingPathComponent:@"writable"];
+        NSString *readonly = [base stringByAppendingPathComponent:@"readonly"];
+
+        [fm createDirectoryAtPath:writable withIntermediateDirectories:YES attributes:nil error:nil];
+        [fm createDirectoryAtPath:readonly withIntermediateDirectories:YES attributes:nil error:nil];
+        [fm setAttributes:@{NSFilePosixPermissions: @0555} ofItemAtPath:readonly error:nil];
+
+        return @{@"base": base, @"writable": writable, @"readonly": readonly};
+    }()
+    '''
+
+    result = frame.EvaluateExpression(setup_expr)
+    dirs = parse_nsdictionary(result)
+
+    yield dirs
+
+    # Cleanup
+    cleanup_expr = f'''
+    (BOOL)^{{
+        NSFileManager *fm = [NSFileManager defaultManager];
+        [fm setAttributes:@{{NSFilePosixPermissions: @0755}} ofItemAtPath:@"{dirs['readonly']}" error:nil];
+        return [fm removeItemAtPath:@"{dirs['base']}" error:nil];
+    }}()
+    '''
+    frame.EvaluateExpression(cleanup_expr)
 ```
 
 ---
