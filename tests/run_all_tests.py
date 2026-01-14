@@ -48,10 +48,8 @@ QUICK_TESTS = [
     ("ivars_props", "test_ivars_props.py", "Instance variables and properties"),
 ]
 
-# Tests for future/unimplemented features (in tests/future/ directory)
-FUTURE_TESTS = [
-    # All features now implemented and moved to IMPLEMENTED_TESTS
-]
+# Reserved for tests of features still in development
+FUTURE_TESTS = []
 
 # Performance/timing tests (optional)
 PERF_TESTS = [
@@ -311,13 +309,11 @@ def main():
 
             # Show how to re-run this specific suite
             suite_name = suite["name"]
-            if suite_name.startswith("test_"):
-                test_file = suite_name
-            else:
-                test_file = f"test_{suite_name}.py"
-            print(f"\n  Re-run this suite: ./tests/{test_file}")
-            if not suite["name"].startswith("test_"):
-                print(f"  Re-run this suite: python3 tests/test_{suite['name']}.py")
+            if not suite_name.startswith("test_"):
+                suite_name = f"test_{suite_name}"
+            if not suite_name.endswith(".py"):
+                suite_name = f"{suite_name}.py"
+            print(f"\n  Re-run this suite: python3 tests/{suite_name}")
 
     # Print summary section (pytest style)
     print(f"\n{'=' * 70}")
