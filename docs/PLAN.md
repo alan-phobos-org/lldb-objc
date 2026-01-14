@@ -4,9 +4,9 @@
 
 A comprehensive set of LLDB commands for Objective-C runtime introspection, making it easy to debug and explore any Objective-C code including private frameworks.
 
-## Current Stage: v1.2 (Stable)
+## Current Stage: v1.3 (Stable)
 
-The project has a solid foundation with 10+ commands covering the core use cases:
+The project has a solid foundation with 11 commands covering core debugging use cases:
 
 | Status | Command | Description |
 |--------|---------|-------------|
@@ -20,8 +20,11 @@ The project has a solid foundation with 10+ commands covering the core use cases
 | Done | `oinstance` | Detailed object inspection |
 | Done | `oexplain` | LLM-powered disassembly explanation |
 | Done | `odecompile` | LLM-powered decompilation |
+| Done | `osbx` | Sandbox filesystem access scanner |
 
-## Next Milestone: v1.3
+Additionally, a standalone sandbox scanner binary is available at `tools/osbx-standalone/` for bulk scanning scenarios.
+
+## Next Milestone: v1.4
 
 ### Priority 1: Cross-Class Method Search
 

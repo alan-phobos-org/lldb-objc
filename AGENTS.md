@@ -14,6 +14,7 @@ Commands that feel like native debugger features, not bolted-on scripts. Output 
 | [docs/PLAN.md](docs/PLAN.md) | Roadmap, backlog | Planning work |
 | [docs/DESIGN.md](docs/DESIGN.md) | Architecture, patterns | Major refactoring |
 | [docs/SANDBOX_DESIGN.md](docs/SANDBOX_DESIGN.md) | Sandbox scanner design | Working on osbx |
+| [docs/SANDBOX_SUMMARY.md](docs/SANDBOX_SUMMARY.md) | Sandbox testing summary | Quick reference for sandbox work |
 | [docs/PITFALLS.md](docs/PITFALLS.md) | Technical gotchas | Debugging failures |
 | [docs/TESTING.md](docs/TESTING.md) | Test guide | Writing tests |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Optimization | Performance work |
@@ -81,17 +82,21 @@ Write commit messages as a human developer would:
 ## Project Structure
 
 ```
-scripts/              # Command modules
+scripts/              # LLDB command modules
   __init__.py         # Loader with reload support
   objc_*.py           # Individual commands
   objc_core.py        # Pure Python (unit testable)
   objc_utils.py       # LLDB-dependent utilities
   objc_llm.py         # LLM integration
+tools/
+  osbx-standalone/    # Standalone sandbox scanner binary
 build.sh              # Build, test, release
 install.py            # Installer
 tests/
   unit/               # Pure Python tests (pytest)
   integration/        # LLDB integration tests
+examples/             # Example projects for testing
+docs/                 # Design documents and guides
 ```
 
 ---
