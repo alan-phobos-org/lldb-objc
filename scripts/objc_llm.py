@@ -98,6 +98,8 @@ def get_register_state(debugger: lldb.SBDebugger) -> Tuple[bool, str]:
     if not gpr:
         return False, "Could not find general purpose registers"
 
+    ci = debugger.GetCommandInterpreter()
+
     # Get x0-x7 (arm64 calling convention)
     for i in range(8):
         reg_name = f"x{i}"
@@ -110,7 +112,6 @@ def get_register_state(debugger: lldb.SBDebugger) -> Tuple[bool, str]:
             if i == 0 and value != 0:
                 # x0 is often 'self' - try to get class name
                 class_result = lldb.SBCommandReturnObject()
-                ci = debugger.GetCommandInterpreter()
                 ci.HandleCommand(
                     f"expr -l objc -- (const char *)object_getClassName((id){value})",
                     class_result,
@@ -124,7 +125,6 @@ def get_register_state(debugger: lldb.SBDebugger) -> Tuple[bool, str]:
             elif i == 1 and value != 0:
                 # x1 is often _cmd (selector) - try to get selector name
                 sel_result = lldb.SBCommandReturnObject()
-                ci = debugger.GetCommandInterpreter()
                 ci.HandleCommand(
                     f"expr -l objc -- (const char *)sel_getName((SEL){value})",
                     sel_result,
