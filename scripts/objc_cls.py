@@ -1251,7 +1251,10 @@ def _get_matching_runtime_images(
 
     # Step 1: Get the image names array and count
     # Use unique variable names to avoid symbol conflicts
-    expr = "(void *)(^{ static unsigned int s_img_count = 0; static const char * const *s_img_names = 0; s_img_names = (const char * const *)objc_copyImageNames(&s_img_count); return (void *)s_img_names; }())"
+    expr = (
+        "(void *)(^{ static unsigned int s_img_count = 0; static const char * const *s_img_names = 0; "
+        "s_img_names = (const char * const *)objc_copyImageNames(&s_img_count); return (void *)s_img_names; }())"
+    )
     result = evaluate_expression(frame, expr, timeout_seconds=10.0)
     timing["expression_count"] += 1
 
@@ -1361,8 +1364,6 @@ def get_classes_for_dylib_filter(
         "memory_read_count": 0,
     }
 
-    process = frame.GetThread().GetProcess()
-
     # Step 1: Get image names from ObjC runtime using objc_copyImageNames
     # This is critical because LLDB's module paths differ from runtime paths,
     # especially on macOS with the dyld shared cache.
@@ -1433,7 +1434,11 @@ def _get_classes_for_image(
     # Step 1: Get the class names array pointer
     # Escape any quotes in the path
     escaped_path = image_path.replace('"', '\\"')
-    expr = f'(void *)(^{{ static unsigned int s_cnt = 0; static const char * const *s_nms = 0; s_nms = (const char * const *)objc_copyClassNamesForImage("{escaped_path}", &s_cnt); return (void *)s_nms; }}())'
+    expr = (
+        f'(void *)(^{{ static unsigned int s_cnt = 0; static const char * const *s_nms = 0; '
+        f's_nms = (const char * const *)objc_copyClassNamesForImage("{escaped_path}", &s_cnt); '
+        f'return (void *)s_nms; }}())'
+    )
     result = evaluate_expression(frame, expr, timeout_seconds=10.0)
     timing["expression_count"] += 1
 
@@ -1445,7 +1450,10 @@ def _get_classes_for_image(
         return [], 0
 
     # Step 2: Get the count
-    count_expr = f'(unsigned int)(^{{ unsigned int c = 0; (void)objc_copyClassNamesForImage("{escaped_path}", &c); return c; }}())'
+    count_expr = (
+        f'(unsigned int)(^{{ unsigned int c = 0; '
+        f'(void)objc_copyClassNamesForImage("{escaped_path}", &c); return c; }}())'
+    )
     count_result = evaluate_expression(frame, count_expr, timeout_seconds=10.0)
     timing["expression_count"] += 1
 
