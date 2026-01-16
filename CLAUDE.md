@@ -28,17 +28,22 @@ lldb-objc provides LLDB Python scripts for enhanced Objective-C debugging, inclu
 
 ### The "error 9 sending breakpoint request" Problem
 
-When debugging iOS system binaries, software breakpoints fail because:
-1. iOS code pages are signed and read-only
-2. Writing breakpoint instructions invalidates the page signature
-3. The kernel terminates the process with code signing error
+**Root cause**: Using `BreakpointCreateBySBAddress(SBAddress)` instead of `BreakpointCreateByAddress(uint64_t)`.
 
-### Solutions (in order of preference)
+The `SBAddress` includes section-relative context that can cause the GDB remote protocol packet to be malformed for iOS shared cache binaries. Using the raw load address (like `b <addr>` does) bypasses this issue.
 
-1. **Hardware breakpoints**: `breakpoint set -H -a <addr>` - Limited to ~4-6 per ARM64 CPU
-2. **Re-sign debugserver** with full entitlements (requires device access)
-3. **platformize debugserver** (requires jailbreak + kernel access)
-4. **csflags** to relax code signing (requires jailbreak)
+**Key insight**: If `b <addr>` works but `obrk` fails with the same address, the problem is in how the breakpoint is created, not the environment.
+
+### The Fix
+
+```python
+# Wrong - includes section context that can cause issues:
+breakpoint = target.BreakpointCreateBySBAddress(resolved_addr)
+
+# Correct - matches `b <addr>` behavior:
+load_addr = resolved_addr.GetLoadAddress(target)
+breakpoint = target.BreakpointCreateByAddress(load_addr)
+```
 
 See `docs/IOS_BREAKPOINT_ERRORS_DESIGN.md` for detailed analysis.
 

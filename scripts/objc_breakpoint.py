@@ -80,11 +80,20 @@ def breakpoint_on_objc_method(
         result.SetError(f"Failed to resolve method address for {method_name}")
         return
 
-    # Set the breakpoint using the resolved SBAddress (handles ASLR correctly)
-    breakpoint = target.BreakpointCreateBySBAddress(resolved_addr)
+    # Get the load address for breakpoint creation
+    load_addr = resolved_addr.GetLoadAddress(target)
+    if load_addr == lldb.LLDB_INVALID_ADDRESS:
+        result.SetError(f"Failed to get load address for {method_name}")
+        return
+
+    # Use BreakpointCreateByAddress with raw load address instead of
+    # BreakpointCreateBySBAddress. The SBAddress version includes section-relative
+    # context that can cause "error N sending breakpoint request" failures on iOS
+    # shared cache binaries where the section information doesn't match what
+    # debugserver expects. Using the raw address matches `b <addr>` behavior.
+    breakpoint = target.BreakpointCreateByAddress(load_addr)
 
     if not breakpoint.IsValid():
-        load_addr = resolved_addr.GetLoadAddress(target)
         result.SetError(f"Failed to create breakpoint at {method_name} (0x{load_addr:x})")
         return
 

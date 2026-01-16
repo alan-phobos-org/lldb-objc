@@ -8,13 +8,30 @@ When debugging iOS system binaries with `obrk`, users encounter errors like:
 warning: failed to set breakpoint site at 0xddq4w34... for breakpoint 1.1: error: 9 sending the breakpoint request
 ```
 
+Critically, using `b <addr>` with the same address works fine.
+
 This document analyzes the root causes and proposes fixes.
 
 ---
 
 ## Root Cause Analysis
 
-### 1. Error Code Meaning
+### Primary Cause: SBAddress vs Raw Address
+
+**The actual bug**: `obrk` was using `BreakpointCreateBySBAddress(SBAddress)` instead of `BreakpointCreateByAddress(uint64_t)`.
+
+The `SBAddress` object returned by `target.ResolveLoadAddress()` contains:
+- The load address (correct)
+- Section-relative offset and module context (problematic)
+
+For iOS shared cache binaries, this section context can cause issues:
+1. The section information doesn't match what debugserver expects
+2. The GDB remote protocol packet (`Z0,<address>,<length>`) gets malformed
+3. debugserver returns an error
+
+**Using raw load address** (what `b <addr>` does internally) bypasses this issue entirely.
+
+### Error Code Meaning
 
 The "error 9 sending the breakpoint request" is a GDB Remote Protocol error. In the protocol:
 
@@ -22,7 +39,7 @@ The "error 9 sending the breakpoint request" is a GDB Remote Protocol error. In 
 - **Error 2 (ENOENT)**: No such file or entry
 - **Error 14 (EFAULT)**: Invalid pointer / memory fault
 
-However, **error codes in GDB RSP are not standardized** - their meaning depends on the debugserver implementation. The actual cause is typically one of the following.
+However, **error codes in GDB RSP are not standardized** - their meaning depends on the debugserver implementation.
 
 ### 2. Software vs Hardware Breakpoints
 
@@ -71,21 +88,35 @@ AMFI enforces code signing and can reject debugserver operations:
 
 ---
 
-## Proposed Solutions
+## The Fix
 
-### Solution 1: Use Hardware Breakpoints (Immediate)
+### Solution: Use Raw Load Address (Implemented)
 
-ARM64 supports hardware breakpoints that don't modify code:
+The fix is simple - use `BreakpointCreateByAddress(uint64_t)` instead of `BreakpointCreateBySBAddress(SBAddress)`:
+
+```python
+# Before (broken for iOS shared cache):
+breakpoint = target.BreakpointCreateBySBAddress(resolved_addr)
+
+# After (works like `b <addr>`):
+load_addr = resolved_addr.GetLoadAddress(target)
+breakpoint = target.BreakpointCreateByAddress(load_addr)
+```
+
+This matches the behavior of LLDB's `b <addr>` command.
+
+---
+
+## Other Potential Issues (Environment-Specific)
+
+The following issues can also cause breakpoint failures, but are unrelated to the `obrk` bug:
+
+### Solution 1: Use Hardware Breakpoints
+
+If software breakpoints fail due to code signing, ARM64 supports hardware breakpoints:
 
 ```
 (lldb) breakpoint set -H -a 0x<address>
-```
-
-Or in Python:
-```python
-# Instead of BreakpointCreateBySBAddress, use hardware breakpoint
-bp = target.BreakpointCreateByAddress(addr)
-bp.SetHardware(True)
 ```
 
 **Limitations:**
@@ -146,115 +177,6 @@ For testing purposes, iOS virtualization platforms like Corellium provide full d
 
 ---
 
-## Implementation Changes for lldb-objc
-
-### Option A: Automatic Hardware Breakpoint Fallback
-
-Modify `objc_breakpoint.py` to detect iOS system binaries and use hardware breakpoints:
-
-```python
-def breakpoint_on_objc_method(debugger, command, result, internal_dict):
-    # ... existing resolution code ...
-
-    # Detect if target is a system binary
-    is_system_binary = is_ios_system_binary(target, resolved_addr)
-
-    if is_system_binary:
-        # Use hardware breakpoint
-        breakpoint = target.BreakpointCreateByAddress(
-            resolved_addr.GetLoadAddress(target)
-        )
-        if breakpoint.IsValid():
-            breakpoint.SetHardware(True)
-            if not breakpoint.IsHardware():
-                result.SetError(
-                    "Failed to set hardware breakpoint. "
-                    "Hardware breakpoints required for system binaries. "
-                    "Check hardware breakpoint availability with 'watchpoint list'."
-                )
-                return
-    else:
-        breakpoint = target.BreakpointCreateBySBAddress(resolved_addr)
-```
-
-### Option B: User Warning and Documentation
-
-Add detection and warning when setting breakpoints on system binaries:
-
-```python
-def check_system_binary_warning(target, address):
-    """Warn user about system binary breakpoint limitations."""
-    module = address.GetModule()
-    if module.IsValid():
-        path = module.GetFileSpec().GetDirectory()
-        if path and ("/System/" in path or "/usr/lib/" in path):
-            return (
-                "WARNING: Setting breakpoint on system binary. "
-                "Software breakpoints may fail with 'error 9'. "
-                "Consider using hardware breakpoint: breakpoint set -H -a <addr>"
-            )
-    return None
-```
-
-### Option C: PAC-Aware Address Resolution
-
-For arm64e binaries with Pointer Authentication:
-
-```python
-def strip_pac(address):
-    """Strip PAC bits from authenticated pointer."""
-    # Top bits contain PAC, keep lower 48 bits for canonical address
-    return address & 0x0000FFFFFFFFFFFF
-```
-
----
-
-## Diagnostic Commands
-
-Add these to help users diagnose the issue:
-
-```
-# Check hardware breakpoint availability
-(lldb) watchpoint list
-
-# Check if process is platform binary
-(lldb) process status
-(lldb) image list -h  # Check code signing info
-
-# View debugserver entitlements
-(lldb) shell cat /proc/<debugserver_pid>/status
-
-# Check CS flags (on device)
-(lldb) shell csops <pid> -status
-```
-
----
-
-## Error Message Improvements
-
-Current error:
-```
-error: 9 sending the breakpoint request
-```
-
-Proposed improved error:
-```
-error: Failed to set breakpoint at 0x... (error 9: memory write denied)
-
-This typically occurs when debugging iOS system binaries because:
-1. Code pages are signed and read-only
-2. Software breakpoints require modifying code memory
-
-Solutions:
-- Use hardware breakpoint: (lldb) breakpoint set -H -a 0x...
-- Ensure debugserver has proper entitlements
-- On jailbroken device: use csflags to relax code signing
-
-See: docs/IOS_BREAKPOINT_ERRORS_DESIGN.md
-```
-
----
-
 ## References
 
 - [Make Debugging Great Again](https://newosxbook.com/articles/MDGA.html) - Platform binary requirements
@@ -267,12 +189,11 @@ See: docs/IOS_BREAKPOINT_ERRORS_DESIGN.md
 
 ## Summary
 
-| Cause | Solution | Requirements |
-|-------|----------|--------------|
-| Code signing enforcement | Hardware breakpoints | None |
-| Missing entitlements | Re-sign debugserver | Device access |
-| Not platform binary | platformize tool | Jailbreak + kernel access |
-| CS_ENFORCEMENT flags | csflags tool | Jailbreak |
-| PAC/arm64e issues | Strip PAC bits | None |
+| Cause | Solution | Status |
+|-------|----------|--------|
+| **SBAddress section context** | Use raw load address | **Fixed** |
+| Code signing enforcement | Hardware breakpoints | Environment-specific |
+| Missing entitlements | Re-sign debugserver | Environment-specific |
+| Not platform binary | platformize tool | Environment-specific |
 
-The recommended approach for most users is **Solution 1: Hardware Breakpoints**, as it requires no special device access and works within iOS's security model.
+The primary bug (using `BreakpointCreateBySBAddress` instead of `BreakpointCreateByAddress`) has been fixed in `scripts/objc_breakpoint.py`.
