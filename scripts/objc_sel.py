@@ -48,6 +48,10 @@ try:
 except ImportError:
     __version__ = "unknown"
 
+# Guard against double initialization
+_initialized = False
+
+from objc_utils import evaluate_expression
 from objc_core import unquote_string, extract_category_from_symbol
 
 # ANSI color codes for consistent UI
@@ -207,7 +211,7 @@ def find_objc_selectors(
     else:
         # Get the class using NSClassFromString
         class_expr = f'(Class)NSClassFromString(@"{class_name}")'
-        class_result = frame.EvaluateExpression(class_expr)
+        class_result = evaluate_expression(frame, class_expr)
         timing["expression_count"] += 1
 
         if not class_result.IsValid() or class_result.GetError().Fail():
@@ -237,7 +241,7 @@ def find_objc_selectors(
         # Get metaclass for class methods
         class_start = time.time()
         metaclass_expr = f"(Class)object_getClass((id)0x{class_ptr:x})"
-        metaclass_result = frame.EvaluateExpression(metaclass_expr)
+        metaclass_result = evaluate_expression(frame, metaclass_expr)
         timing["expression_count"] += 1
 
         if metaclass_result.IsValid() and not metaclass_result.GetError().Fail():
@@ -437,7 +441,7 @@ def get_methods_optimized(
 
     # Allocate space for method count
     count_var_expr = "(unsigned int *)malloc(sizeof(unsigned int))"
-    count_var_result = frame.EvaluateExpression(count_var_expr)
+    count_var_result = evaluate_expression(frame, count_var_expr)
     timing["expression_count"] += 1
 
     if not count_var_result.IsValid() or count_var_result.GetError().Fail():
@@ -448,12 +452,12 @@ def get_methods_optimized(
 
     # Copy method list
     method_list_expr = f"(void *)class_copyMethodList((Class)0x{class_ptr:x}, (unsigned int *)0x{count_var_ptr:x})"
-    method_list_result = frame.EvaluateExpression(method_list_expr)
+    method_list_result = evaluate_expression(frame, method_list_expr)
     timing["expression_count"] += 1
 
     if not method_list_result.IsValid() or method_list_result.GetError().Fail():
         print(f"Warning: class_copyMethodList failed: {method_list_result.GetError()}")
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         timing["expression_count"] += 1
         return [], timing
 
@@ -461,22 +465,22 @@ def get_methods_optimized(
 
     # Read the count
     count_read_expr = f"(unsigned int)(*(unsigned int *)0x{count_var_ptr:x})"
-    count_read_result = frame.EvaluateExpression(count_read_expr)
+    count_read_result = evaluate_expression(frame, count_read_expr)
     timing["expression_count"] += 1
 
     if not count_read_result.IsValid() or count_read_result.GetError().Fail():
         print("Warning: Failed to read method count")
         if method_list_ptr != 0:
-            frame.EvaluateExpression(f"(void)free((void *)0x{method_list_ptr:x})")
+            evaluate_expression(frame, f"(void)free((void *)0x{method_list_ptr:x})")
             timing["expression_count"] += 1
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         timing["expression_count"] += 1
         return [], timing
 
     method_count = count_read_result.GetValueAsUnsigned()
 
     if method_count == 0 or method_list_ptr == 0:
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         timing["expression_count"] += 1
         return [], timing
 
@@ -491,9 +495,9 @@ def get_methods_optimized(
     if not error.Success():
         print(f"Warning: Failed to read method array from memory: {error}")
         if method_list_ptr != 0:
-            frame.EvaluateExpression(f"(void)free((void *)0x{method_list_ptr:x})")
+            evaluate_expression(frame, f"(void)free((void *)0x{method_list_ptr:x})")
             timing["expression_count"] += 1
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         timing["expression_count"] += 1
         return [], timing
 
@@ -516,7 +520,7 @@ def get_methods_optimized(
 
         # Build and execute batch expression
         batch_expr = build_selector_batch_expression(batch)
-        batch_result = frame.EvaluateExpression(batch_expr)
+        batch_result = evaluate_expression(frame, batch_expr)
         timing["expression_count"] += 1
 
         if not batch_result.IsValid() or batch_result.GetError().Fail():
@@ -526,12 +530,12 @@ def get_methods_optimized(
                     continue
                 # Get selector name
                 sel_name_expr = f"(const char *)sel_getName((SEL)method_getName((void *)0x{method_ptr:x}))"
-                sel_name_result = frame.EvaluateExpression(sel_name_expr)
+                sel_name_result = evaluate_expression(frame, sel_name_expr)
                 timing["expression_count"] += 1
 
                 # Get IMP
                 imp_expr = f"(void *)method_getImplementation((void *)0x{method_ptr:x})"
-                imp_result = frame.EvaluateExpression(imp_expr)
+                imp_result = evaluate_expression(frame, imp_expr)
                 timing["expression_count"] += 1
 
                 if sel_name_result.IsValid() and not sel_name_result.GetError().Fail():
@@ -574,14 +578,14 @@ def get_methods_optimized(
             print(f"Warning: Failed to read batch {batch_idx // batch_size + 1}, some methods may be missing")
 
         # Free the info buffer
-        frame.EvaluateExpression(f"(void)free((void *)0x{info_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{info_ptr:x})")
         timing["expression_count"] += 1
 
     # Clean up allocated memory
     if method_list_ptr != 0:
-        frame.EvaluateExpression(f"(void)free((void *)0x{method_list_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{method_list_ptr:x})")
         timing["expression_count"] += 1
-    frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+    evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
     timing["expression_count"] += 1
 
     # Optionally resolve category info from symbols
@@ -606,6 +610,10 @@ def get_methods_optimized(
 
 def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any]) -> None:
     """Initialize the module by registering the command."""
+    global _initialized
+    if _initialized:
+        return
+    _initialized = True
     module_path = f"{__name__}.find_objc_selectors"
     debugger.HandleCommand(
         'command script add -h "Find Objective-C selectors (methods) for a class. '

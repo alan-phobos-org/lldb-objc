@@ -23,6 +23,9 @@ try:
 except ImportError:
     __version__ = "unknown"
 
+# Guard against double initialization
+_initialized = False
+
 from objc_core import parse_method_signature, format_method_name
 
 from objc_utils import resolve_method_address, detect_method_type
@@ -95,6 +98,10 @@ def breakpoint_on_objc_method(
 
 def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any]) -> None:
     """Initialize the module by registering the command."""
+    global _initialized
+    if _initialized:
+        return
+    _initialized = True
     module_path = f"{__name__}.breakpoint_on_objc_method"
     debugger.HandleCommand(f'command script add -h "Set breakpoint on Objective-C method" -f {module_path} obrk')
     print(f"[lldb-objc v{__version__}] 'obrk' installed - Set breakpoints on Objective-C methods")

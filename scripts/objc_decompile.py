@@ -31,6 +31,9 @@ try:
 except ImportError:
     __version__ = "unknown"
 
+# Guard against double initialization
+_initialized = False
+
 from objc_llm import (
     get_disassembly,
     build_context,
@@ -168,6 +171,10 @@ def decompile_command(
 
 def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any]) -> None:
     """Initialize the odecompile command when this module is loaded in LLDB."""
+    global _initialized
+    if _initialized:
+        return
+    _initialized = True
     module_path = f"{__name__}.decompile_command"
     debugger.HandleCommand(f"command script add -f {module_path} odecompile")
     print(f"[lldb-objc v{__version__}] 'odecompile' installed - Decompile with LLM")

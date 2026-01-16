@@ -30,6 +30,144 @@ except ImportError:
 # Import pure Python utilities from objc_core
 from objc_core import extract_inherited_class
 
+# -----------------------------------------------------------------------------
+# Expression Evaluation Optimization
+# -----------------------------------------------------------------------------
+# These utilities provide optimized expression evaluation by:
+# 1. Setting expression options that reduce overhead (skip breakpoints, single thread)
+# 2. Providing a consistent interface for expression evaluation across the codebase
+# 3. Caching expression options to avoid repeated object creation
+
+# Global cached expression options (created once per process)
+_cached_expr_options: Optional[lldb.SBExpressionOptions] = None
+
+
+def get_expression_options(
+    timeout_seconds: float = 30.0,
+    ignore_breakpoints: bool = True,
+    try_all_threads: bool = False,
+    unwind_on_error: bool = True,
+) -> lldb.SBExpressionOptions:
+    """
+    Get optimized expression options for LLDB expression evaluation.
+
+    These options significantly reduce overhead for expression evaluation by:
+    - Ignoring breakpoints during evaluation (avoids unnecessary checks)
+    - Using only the current thread (avoids thread switching overhead)
+    - Setting appropriate timeouts
+
+    Args:
+        timeout_seconds: Maximum time for expression evaluation (default: 30s)
+        ignore_breakpoints: Skip breakpoint checks during evaluation (default: True)
+        try_all_threads: Try other threads if current fails (default: False)
+        unwind_on_error: Unwind stack on error (default: True)
+
+    Returns:
+        Configured SBExpressionOptions object
+    """
+    global _cached_expr_options
+
+    # Use cached options for default parameters (most common case)
+    if timeout_seconds == 30.0 and ignore_breakpoints and not try_all_threads and unwind_on_error:
+        if _cached_expr_options is None:
+            _cached_expr_options = lldb.SBExpressionOptions()
+            _cached_expr_options.SetIgnoreBreakpoints(True)
+            _cached_expr_options.SetTryAllThreads(False)
+            _cached_expr_options.SetUnwindOnError(True)
+            _cached_expr_options.SetTimeoutInMicroSeconds(int(30.0 * 1_000_000))
+            _cached_expr_options.SetLanguage(lldb.eLanguageTypeObjC_plus_plus)
+        return _cached_expr_options
+
+    # Create new options for non-default parameters
+    options = lldb.SBExpressionOptions()
+    options.SetIgnoreBreakpoints(ignore_breakpoints)
+    options.SetTryAllThreads(try_all_threads)
+    options.SetUnwindOnError(unwind_on_error)
+    options.SetTimeoutInMicroSeconds(int(timeout_seconds * 1_000_000))
+    options.SetLanguage(lldb.eLanguageTypeObjC_plus_plus)
+    return options
+
+
+def evaluate_expression(
+    frame: lldb.SBFrame,
+    expr: str,
+    timeout_seconds: float = 30.0,
+    options: Optional[lldb.SBExpressionOptions] = None,
+) -> lldb.SBValue:
+    """
+    Evaluate an expression with optimized settings.
+
+    This is a convenience wrapper around frame.EvaluateExpression that
+    automatically applies performance-optimized expression options.
+
+    Args:
+        frame: The LLDB SBFrame for expression evaluation
+        expr: The expression string to evaluate
+        timeout_seconds: Maximum time for evaluation (default: 30s, ignored if options provided)
+        options: Optional custom SBExpressionOptions (uses optimized defaults if None)
+
+    Returns:
+        SBValue result from the expression evaluation
+
+    Example:
+        result = evaluate_expression(frame, '(Class)NSClassFromString(@"NSObject")')
+        if result.IsValid() and not result.GetError().Fail():
+            ptr = result.GetValueAsUnsigned()
+    """
+    if options is None:
+        options = get_expression_options(timeout_seconds=timeout_seconds)
+    return frame.EvaluateExpression(expr, options)
+
+
+def evaluate_expression_value(
+    frame: lldb.SBFrame,
+    expr: str,
+    default: int = 0,
+) -> int:
+    """
+    Evaluate an expression and return its unsigned integer value.
+
+    Convenience function for the common pattern of evaluating an expression
+    and extracting an unsigned integer result.
+
+    Args:
+        frame: The LLDB SBFrame for expression evaluation
+        expr: The expression string to evaluate
+        default: Value to return on error (default: 0)
+
+    Returns:
+        Unsigned integer value of the result, or default on error
+    """
+    result = evaluate_expression(frame, expr)
+    if result.IsValid() and not result.GetError().Fail():
+        return result.GetValueAsUnsigned()
+    return default
+
+
+def evaluate_expression_string(
+    frame: lldb.SBFrame,
+    expr: str,
+    default: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Evaluate an expression and return its string summary.
+
+    Convenience function for the common pattern of evaluating an expression
+    and extracting a string result (e.g., from const char* expressions).
+
+    Args:
+        frame: The LLDB SBFrame for expression evaluation
+        expr: The expression string to evaluate
+        default: Value to return on error (default: None)
+
+    Returns:
+        String summary of the result, or default on error
+    """
+    result = evaluate_expression(frame, expr)
+    if result.IsValid() and not result.GetError().Fail():
+        return result.GetSummary()
+    return default
+
 
 def resolve_method_address(
     frame: lldb.SBFrame,
@@ -66,7 +204,7 @@ def resolve_method_address(
     invalid_addr = lldb.SBAddress()
 
     class_expr = f'(Class)NSClassFromString(@"{class_name}")'
-    class_result = frame.EvaluateExpression(class_expr)
+    class_result = evaluate_expression(frame, class_expr)
 
     if not class_result.IsValid() or class_result.GetError().Fail():
         return (
@@ -86,7 +224,7 @@ def resolve_method_address(
 
     # Step 2: Get the selector using NSSelectorFromString
     sel_expr = f'(SEL)NSSelectorFromString(@"{selector}")'
-    sel_result = frame.EvaluateExpression(sel_expr)
+    sel_result = evaluate_expression(frame, sel_expr)
 
     if not sel_result.IsValid() or sel_result.GetError().Fail():
         return (
@@ -108,7 +246,7 @@ def resolve_method_address(
     lookup_class_ptr = class_ptr
     if not is_instance_method:
         metaclass_expr = f"(Class)object_getClass((id)0x{class_ptr:x})"
-        metaclass_result = frame.EvaluateExpression(metaclass_expr)
+        metaclass_result = evaluate_expression(frame, metaclass_expr)
 
         if not metaclass_result.IsValid() or metaclass_result.GetError().Fail():
             return (
@@ -122,7 +260,7 @@ def resolve_method_address(
 
     # Step 4: Get the method implementation using class_getMethodImplementation
     imp_expr = f"(void *)class_getMethodImplementation((Class)0x{lookup_class_ptr:x}, (SEL)0x{sel_ptr:x})"
-    imp_result = frame.EvaluateExpression(imp_expr)
+    imp_result = evaluate_expression(frame, imp_expr)
 
     if not imp_result.IsValid() or imp_result.GetError().Fail():
         return (
@@ -213,7 +351,7 @@ def detect_method_type(frame: lldb.SBFrame, class_name: str, selector: str, verb
         (void *)class_getClassMethod(cls, sel);
     }})'''
 
-    class_result = frame.EvaluateExpression(check_expr)
+    class_result = evaluate_expression(frame, check_expr)
     if class_result.IsValid() and not class_result.GetError().Fail():
         has_class_method = class_result.GetValueAsUnsigned() != 0
         if has_class_method:
@@ -229,7 +367,7 @@ def detect_method_type(frame: lldb.SBFrame, class_name: str, selector: str, verb
         (void *)class_getInstanceMethod(cls, sel);
     }})'''
 
-    instance_result = frame.EvaluateExpression(check_expr)
+    instance_result = evaluate_expression(frame, check_expr)
     if instance_result.IsValid() and not instance_result.GetError().Fail():
         has_instance_method = instance_result.GetValueAsUnsigned() != 0
         if has_instance_method:

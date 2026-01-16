@@ -47,23 +47,29 @@ COMMAND_MODULES = [
 
 # Track loaded modules for reloading
 _loaded_modules = {}
+# Track which modules have been initialized (prevents double init)
+_initialized_modules = set()
 
 
-def _load_command_module(module_name: str, debugger: lldb.SBDebugger) -> bool:
+def _load_command_module(module_name: str, debugger: lldb.SBDebugger, force_reload: bool = False) -> bool:
     """Load or reload a single command module."""
-    global _loaded_modules
+    global _loaded_modules, _initialized_modules
 
     try:
         # Import or reload the module (relative import from scripts package)
         if module_name in _loaded_modules:
             module = importlib.reload(_loaded_modules[module_name])
+            # On reload, we need to re-initialize
+            _initialized_modules.discard(module_name)
         else:
             module = importlib.import_module(module_name, package=__name__)
             _loaded_modules[module_name] = module
 
-        # Call the module's initialization function if it exists
+        # Call the module's initialization function if not already done
         if hasattr(module, "__lldb_init_module"):
-            module.__lldb_init_module(debugger, {})
+            if module_name not in _initialized_modules or force_reload:
+                module.__lldb_init_module(debugger, {})
+                _initialized_modules.add(module_name)
 
         return True
     except Exception as e:

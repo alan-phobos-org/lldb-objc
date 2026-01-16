@@ -43,6 +43,9 @@ try:
 except ImportError:
     __version__ = "unknown"
 
+# Guard against double initialization
+_initialized = False
+
 from objc_utils import (
     resolve_method_address,
     get_arch_registers,
@@ -514,6 +517,10 @@ def clear_watches(target: lldb.SBTarget, process: lldb.SBProcess, result: lldb.S
 
 def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any]) -> None:
     """Initialize the module by registering the command."""
+    global _initialized
+    if _initialized:
+        return
+    _initialized = True
     module_path = f"{__name__}.watch_objc_method"
     debugger.HandleCommand(
         f'command script add -h "Watch Objective-C methods with auto-logging breakpoints" -f {module_path} owatch'

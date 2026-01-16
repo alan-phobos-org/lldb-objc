@@ -675,6 +675,41 @@ def validate_dylib_filter_case_insensitive():
     return validator
 
 
+def validate_dylib_fast_path():
+    """Validator for --dylib fast path optimization using objc_copyClassNamesForImage."""
+
+    def validator(output):
+        # With --verbose, the output shows "Expressions: N"
+        # The fast path should use very few expressions (< 10 per module)
+        # The old approach would use O(2N) expressions where N = matched classes
+        match = re.search(r"Expressions:\s*(\d+)", output)
+        if match:
+            expr_count = int(match.group(1))
+            # Fast path: ~2 expressions per module (query + free)
+            # Even with multiple modules, should be < 20
+            # Old approach would be 100+ for any meaningful class count
+            if expr_count < 20:
+                return True, f"Fast path confirmed: only {expr_count} expressions"
+            return False, (
+                f"Too many expressions ({expr_count}), fast path may not be working\n"
+                f"    Expected: < 20 expressions (using objc_copyClassNamesForImage)\n"
+                f"    Actual: {expr_count} expressions\n"
+                f"    This suggests per-class filtering is being used instead\n"
+                f"    Output preview: {output[:300]}"
+            )
+        # If no expression count found but command succeeded
+        if "Found" in output or "NS" in output:
+            return False, (
+                f"Command succeeded but no expression count in output\n"
+                f"    Expected: 'Expressions: N' in verbose output\n"
+                f"    Ensure --verbose flag is being used\n"
+                f"    Output preview: {output[:300]}"
+            )
+        return False, (f"Unexpected output for fast path test\n    Output preview: {output[:300]}")
+
+    return validator
+
+
 # =============================================================================
 # Test Specifications
 # =============================================================================
@@ -808,6 +843,11 @@ def get_test_specs():
             ["ocls --dylib *foundation* NS*"],
             validate_dylib_filter_case_insensitive(),
         ),
+        (
+            "Flag: --dylib fast path (low expression count)",
+            ["ocls --dylib *Foundation* --verbose NS*"],
+            validate_dylib_fast_path(),
+        ),
     ]
 
 
@@ -822,7 +862,7 @@ def main():
         "Hierarchy display": (15, 18),
         "Edge cases": (18, 20),
         "Dylib display": (20, 23),
-        "--dylib filter": (23, 29),
+        "--dylib filter": (23, 30),
     }
 
     # Pre-warm the class cache once at startup to avoid slow first-run in tests

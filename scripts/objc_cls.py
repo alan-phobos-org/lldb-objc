@@ -36,7 +36,7 @@ Dylib filtering (--dylib):
 
 Performance:
   - Fast-path (exact match): <0.01 seconds (bypasses full enumeration)
-  - First run with wildcards/listing all: ~10-30 seconds for 10K classes
+  - First run with wildcards/listing all: ~1-5 seconds for 10K classes (monolithic expression)
   - Cached run: <0.01 seconds
   - Use --reload to refresh cache when runtime state changes
 
@@ -75,7 +75,11 @@ try:
 except ImportError:
     __version__ = "unknown"
 
+# Guard against double initialization
+_initialized = False
+
 from objc_core import unquote_string
+from objc_utils import evaluate_expression, get_expression_options
 
 # Type aliases
 TimingDict = Dict[str, Any]
@@ -191,17 +195,16 @@ def find_objc_classes(
     thread = process.GetSelectedThread()
     frame = thread.GetSelectedFrame()
 
-    # Get all classes (with caching)
-    class_names, timing, class_count, from_cache = get_all_classes(frame, pattern, force_reload, batch_size)
-
-    # Apply dylib filter if specified
-    if dylib_filter and class_names:
-        filtered_classes = []
-        for class_name in class_names:
-            image_path = get_class_image_path(frame, class_name)
-            if image_path and matches_dylib_pattern(image_path, dylib_filter):
-                filtered_classes.append(class_name)
-        class_names = filtered_classes
+    # Get classes - use fast path for dylib filtering, otherwise use cached enumeration
+    if dylib_filter:
+        # FAST PATH: Use objc_copyClassNamesForImage per matching module
+        # This is O(M) expressions where M = matching modules (typically 1-5)
+        # vs the old O(2N) approach where N = matched classes (could be 1000+)
+        class_names, timing, class_count = get_classes_for_dylib_filter(frame, dylib_filter, pattern, verbose)
+        from_cache = False
+    else:
+        # Standard path: enumerate all classes (with caching)
+        class_names, timing, class_count, from_cache = get_all_classes(frame, pattern, force_reload, batch_size)
 
     # Display results with hierarchy information based on match count
     num_matches = len(class_names)
@@ -364,7 +367,7 @@ def get_class_image_path(frame: lldb.SBFrame, class_name: str) -> Optional[str]:
     """
     # Get the class object
     class_expr = f'(void *)NSClassFromString(@"{class_name}")'
-    class_result = frame.EvaluateExpression(class_expr)
+    class_result = evaluate_expression(frame, class_expr)
 
     if not class_result.IsValid() or class_result.GetError().Fail():
         return None
@@ -375,7 +378,7 @@ def get_class_image_path(frame: lldb.SBFrame, class_name: str) -> Optional[str]:
 
     # Get the image name using class_getImageName
     image_expr = f"(const char *)class_getImageName((Class)0x{class_ptr:x})"
-    image_result = frame.EvaluateExpression(image_expr)
+    image_result = evaluate_expression(frame, image_expr)
 
     if not image_result.IsValid() or image_result.GetError().Fail():
         return None
@@ -405,7 +408,7 @@ def get_class_hierarchy(frame: lldb.SBFrame, class_name: str) -> List[str]:
 
     # Get the class object
     class_expr = f'(void *)NSClassFromString(@"{class_name}")'
-    class_result = frame.EvaluateExpression(class_expr)
+    class_result = evaluate_expression(frame, class_expr)
 
     if not class_result.IsValid() or class_result.GetError().Fail():
         return []
@@ -419,7 +422,7 @@ def get_class_hierarchy(frame: lldb.SBFrame, class_name: str) -> List[str]:
     for _ in range(max_depth):
         # Get current class name
         name_expr = f"(const char *)class_getName((void *)0x{current_class:x})"
-        name_result = frame.EvaluateExpression(name_expr)
+        name_result = evaluate_expression(frame, name_expr)
 
         if not name_result.IsValid() or name_result.GetError().Fail():
             break
@@ -433,7 +436,7 @@ def get_class_hierarchy(frame: lldb.SBFrame, class_name: str) -> List[str]:
 
         # Get superclass
         super_expr = f"(void *)class_getSuperclass((void *)0x{current_class:x})"
-        super_result = frame.EvaluateExpression(super_expr)
+        super_result = evaluate_expression(frame, super_expr)
 
         if not super_result.IsValid() or super_result.GetError().Fail():
             break
@@ -467,7 +470,7 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
 
     # Get the class object
     class_expr = f'(void *)NSClassFromString(@"{class_name}")'
-    class_result = frame.EvaluateExpression(class_expr)
+    class_result = evaluate_expression(frame, class_expr)
 
     if not class_result.IsValid() or class_result.GetError().Fail():
         return []
@@ -478,7 +481,7 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
 
     # We need to allocate memory for the count
     count_var_expr = "(unsigned int *)malloc(sizeof(unsigned int))"
-    count_var_result = frame.EvaluateExpression(count_var_expr)
+    count_var_result = evaluate_expression(frame, count_var_expr)
 
     if not count_var_result.IsValid() or count_var_result.GetError().Fail():
         return []
@@ -487,28 +490,28 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
 
     # Get ivar list
     ivar_list_expr = f"(void *)class_copyIvarList((Class)0x{class_ptr:x}, (unsigned int *)0x{count_var_ptr:x})"
-    ivar_list_result = frame.EvaluateExpression(ivar_list_expr)
+    ivar_list_result = evaluate_expression(frame, ivar_list_expr)
 
     if not ivar_list_result.IsValid() or ivar_list_result.GetError().Fail():
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         return []
 
     ivar_list_ptr = ivar_list_result.GetValueAsUnsigned()
 
     # Read the count
     count_read_expr = f"(unsigned int)(*(unsigned int *)0x{count_var_ptr:x})"
-    count_read_result = frame.EvaluateExpression(count_read_expr)
+    count_read_result = evaluate_expression(frame, count_read_expr)
 
     if not count_read_result.IsValid() or count_read_result.GetError().Fail():
         if ivar_list_ptr != 0:
-            frame.EvaluateExpression(f"(void)free((void *)0x{ivar_list_ptr:x})")
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+            evaluate_expression(frame, f"(void)free((void *)0x{ivar_list_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         return []
 
     ivar_count = count_read_result.GetValueAsUnsigned()
 
     if ivar_count == 0 or ivar_list_ptr == 0:
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         return []
 
     # Read ivar list as array of pointers
@@ -521,8 +524,8 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
 
     if not error.Success():
         if ivar_list_ptr != 0:
-            frame.EvaluateExpression(f"(void)free((void *)0x{ivar_list_ptr:x})")
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+            evaluate_expression(frame, f"(void)free((void *)0x{ivar_list_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         return []
 
     # Parse ivar pointers
@@ -566,7 +569,7 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
 """
 
     # Execute the batch expression
-    batch_result = frame.EvaluateExpression(batch_expr)
+    batch_result = evaluate_expression(frame, batch_expr)
 
     if batch_result.IsValid() and not batch_result.GetError().Fail():
         info_ptr = batch_result.GetValueAsUnsigned()
@@ -611,7 +614,7 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
                     ivars.append((ivar_name, ivar_type, ivar_offset))
 
             # Free the info struct
-            frame.EvaluateExpression(f"(void)free((void *)0x{info_ptr:x})")
+            evaluate_expression(frame, f"(void)free((void *)0x{info_ptr:x})")
     else:
         # Fallback to individual calls
         for ivar_ptr in ivar_pointers:
@@ -620,7 +623,7 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
 
             # Get ivar name
             name_expr = f"(const char *)ivar_getName((void *)0x{ivar_ptr:x})"
-            name_result = frame.EvaluateExpression(name_expr)
+            name_result = evaluate_expression(frame, name_expr)
 
             if not name_result.IsValid() or name_result.GetError().Fail():
                 continue
@@ -635,7 +638,7 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
 
             # Get ivar type encoding
             type_expr = f"(const char *)ivar_getTypeEncoding((void *)0x{ivar_ptr:x})"
-            type_result = frame.EvaluateExpression(type_expr)
+            type_result = evaluate_expression(frame, type_expr)
 
             if not type_result.IsValid() or type_result.GetError().Fail():
                 ivar_type = "?"
@@ -653,7 +656,7 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
 
             # Get ivar offset
             offset_expr = f"(ptrdiff_t)ivar_getOffset((void *)0x{ivar_ptr:x})"
-            offset_result = frame.EvaluateExpression(offset_expr)
+            offset_result = evaluate_expression(frame, offset_expr)
 
             if not offset_result.IsValid() or offset_result.GetError().Fail():
                 ivar_offset = None
@@ -664,8 +667,8 @@ def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]
 
     # Clean up
     if ivar_list_ptr != 0:
-        frame.EvaluateExpression(f"(void)free((void *)0x{ivar_list_ptr:x})")
-    frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{ivar_list_ptr:x})")
+    evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
 
     return ivars
 
@@ -976,7 +979,7 @@ def get_class_properties(frame: lldb.SBFrame, class_name: str) -> List[Dict[str,
 
     # Get the class object
     class_expr = f'(void *)NSClassFromString(@"{class_name}")'
-    class_result = frame.EvaluateExpression(class_expr)
+    class_result = evaluate_expression(frame, class_expr)
 
     if not class_result.IsValid() or class_result.GetError().Fail():
         return []
@@ -987,7 +990,7 @@ def get_class_properties(frame: lldb.SBFrame, class_name: str) -> List[Dict[str,
 
     # Allocate memory for the count
     count_var_expr = "(unsigned int *)malloc(sizeof(unsigned int))"
-    count_var_result = frame.EvaluateExpression(count_var_expr)
+    count_var_result = evaluate_expression(frame, count_var_expr)
 
     if not count_var_result.IsValid() or count_var_result.GetError().Fail():
         return []
@@ -996,28 +999,28 @@ def get_class_properties(frame: lldb.SBFrame, class_name: str) -> List[Dict[str,
 
     # Get property list
     prop_list_expr = f"(void *)class_copyPropertyList((Class)0x{class_ptr:x}, (unsigned int *)0x{count_var_ptr:x})"
-    prop_list_result = frame.EvaluateExpression(prop_list_expr)
+    prop_list_result = evaluate_expression(frame, prop_list_expr)
 
     if not prop_list_result.IsValid() or prop_list_result.GetError().Fail():
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         return []
 
     prop_list_ptr = prop_list_result.GetValueAsUnsigned()
 
     # Read the count
     count_read_expr = f"(unsigned int)(*(unsigned int *)0x{count_var_ptr:x})"
-    count_read_result = frame.EvaluateExpression(count_read_expr)
+    count_read_result = evaluate_expression(frame, count_read_expr)
 
     if not count_read_result.IsValid() or count_read_result.GetError().Fail():
         if prop_list_ptr != 0:
-            frame.EvaluateExpression(f"(void)free((void *)0x{prop_list_ptr:x})")
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+            evaluate_expression(frame, f"(void)free((void *)0x{prop_list_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         return []
 
     prop_count = count_read_result.GetValueAsUnsigned()
 
     if prop_count == 0 or prop_list_ptr == 0:
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         return []
 
     # Read property list as array of pointers
@@ -1030,8 +1033,8 @@ def get_class_properties(frame: lldb.SBFrame, class_name: str) -> List[Dict[str,
 
     if not error.Success():
         if prop_list_ptr != 0:
-            frame.EvaluateExpression(f"(void)free((void *)0x{prop_list_ptr:x})")
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+            evaluate_expression(frame, f"(void)free((void *)0x{prop_list_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         return []
 
     # Parse property pointers
@@ -1073,7 +1076,7 @@ def get_class_properties(frame: lldb.SBFrame, class_name: str) -> List[Dict[str,
 """
 
     # Execute the batch expression
-    batch_result = frame.EvaluateExpression(batch_expr)
+    batch_result = evaluate_expression(frame, batch_expr)
 
     if batch_result.IsValid() and not batch_result.GetError().Fail():
         info_ptr = batch_result.GetValueAsUnsigned()
@@ -1114,7 +1117,7 @@ def get_class_properties(frame: lldb.SBFrame, class_name: str) -> List[Dict[str,
                     properties.append((prop_name, prop_attrs))
 
             # Free the info struct
-            frame.EvaluateExpression(f"(void)free((void *)0x{info_ptr:x})")
+            evaluate_expression(frame, f"(void)free((void *)0x{info_ptr:x})")
     else:
         # Fallback to individual calls
         for prop_ptr in prop_pointers:
@@ -1123,7 +1126,7 @@ def get_class_properties(frame: lldb.SBFrame, class_name: str) -> List[Dict[str,
 
             # Get property name
             name_expr = f"(const char *)property_getName((void *)0x{prop_ptr:x})"
-            name_result = frame.EvaluateExpression(name_expr)
+            name_result = evaluate_expression(frame, name_expr)
 
             if not name_result.IsValid() or name_result.GetError().Fail():
                 continue
@@ -1138,7 +1141,7 @@ def get_class_properties(frame: lldb.SBFrame, class_name: str) -> List[Dict[str,
 
             # Get property attributes
             attr_expr = f"(const char *)property_getAttributes((void *)0x{prop_ptr:x})"
-            attr_result = frame.EvaluateExpression(attr_expr)
+            attr_result = evaluate_expression(frame, attr_expr)
 
             if not attr_result.IsValid() or attr_result.GetError().Fail():
                 prop_attrs = ""
@@ -1157,8 +1160,8 @@ def get_class_properties(frame: lldb.SBFrame, class_name: str) -> List[Dict[str,
 
     # Clean up
     if prop_list_ptr != 0:
-        frame.EvaluateExpression(f"(void)free((void *)0x{prop_list_ptr:x})")
-    frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{prop_list_ptr:x})")
+    evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
 
     return properties
 
@@ -1221,6 +1224,422 @@ def matches_dylib_pattern(dylib_path: str, pattern: str) -> bool:
     except re.error:
         # Fallback to substring match if regex is invalid
         return pattern.lower() in dylib_path.lower()
+
+
+def _get_matching_runtime_images(
+    frame: lldb.SBFrame,
+    dylib_pattern: str,
+    timing: TimingDict,
+) -> List[str]:
+    """
+    Get image paths from the ObjC runtime that match the given pattern.
+
+    Uses objc_copyImageNames() to get the runtime's view of loaded images,
+    which is essential because LLDB's module paths can differ from runtime paths
+    (especially on macOS with the dyld shared cache).
+
+    Args:
+        frame: LLDB frame for expression evaluation
+        dylib_pattern: Pattern to match against image paths (supports wildcards)
+        timing: Timing dict to update with expression counts
+
+    Returns:
+        List of image paths matching the pattern
+    """
+    process = frame.GetThread().GetProcess()
+    pointer_size = frame.GetModule().GetAddressByteSize()
+
+    # Step 1: Get the image names array and count
+    # Use unique variable names to avoid symbol conflicts
+    expr = "(void *)(^{ static unsigned int s_img_count = 0; static const char * const *s_img_names = 0; s_img_names = (const char * const *)objc_copyImageNames(&s_img_count); return (void *)s_img_names; }())"
+    result = evaluate_expression(frame, expr, timeout_seconds=10.0)
+    timing["expression_count"] += 1
+
+    if not result.IsValid() or result.GetError().Fail():
+        return []
+
+    names_ptr = result.GetValueAsUnsigned()
+    if names_ptr == 0:
+        return []
+
+    # Step 2: Get the count
+    count_expr = """
+(unsigned int)(^{
+    unsigned int c = 0;
+    (void)objc_copyImageNames(&c);
+    return c;
+}())
+"""
+    count_result = evaluate_expression(frame, count_expr, timeout_seconds=10.0)
+    timing["expression_count"] += 1
+
+    if not count_result.IsValid() or count_result.GetError().Fail():
+        # Free the names array
+        evaluate_expression(frame, f"(void)free((void *)0x{names_ptr:x})")
+        timing["expression_count"] += 1
+        return []
+
+    img_count = count_result.GetValueAsUnsigned()
+    if img_count == 0:
+        evaluate_expression(frame, f"(void)free((void *)0x{names_ptr:x})")
+        timing["expression_count"] += 1
+        return []
+
+    # Step 3: Read the array of string pointers
+    array_size = img_count * pointer_size
+    error = lldb.SBError()
+    ptr_array_bytes = process.ReadMemory(names_ptr, array_size, error)
+    timing["memory_read_count"] += 1
+
+    if not error.Success():
+        evaluate_expression(frame, f"(void)free((void *)0x{names_ptr:x})")
+        timing["expression_count"] += 1
+        return []
+
+    # Parse the pointer array
+    if pointer_size == 8:
+        format_str = f"{img_count}Q"
+    else:
+        format_str = f"{img_count}I"
+    string_ptrs = struct.unpack(format_str, ptr_array_bytes)
+
+    # Step 4: Read each string that matches the pattern
+    # We read all strings and filter - typically ~200 images, so this is fast
+    matching_images = []
+    for str_ptr in string_ptrs:
+        if str_ptr == 0:
+            continue
+        # Read string from memory (max 512 chars for paths)
+        img_path = process.ReadCStringFromMemory(str_ptr, 512, error)
+        timing["memory_read_count"] += 1
+        if error.Success() and img_path:
+            if matches_dylib_pattern(img_path, dylib_pattern):
+                matching_images.append(img_path)
+
+    # Free the names array
+    evaluate_expression(frame, f"(void)free((void *)0x{names_ptr:x})")
+    timing["expression_count"] += 1
+
+    return matching_images
+
+
+def get_classes_for_dylib_filter(
+    frame: lldb.SBFrame,
+    dylib_pattern: str,
+    class_pattern: Optional[str] = None,
+    verbose: bool = False,
+) -> Tuple[List[str], TimingDict, int]:
+    """
+    Get classes from dylibs matching the given pattern using objc_copyClassNamesForImage.
+
+    This is MUCH faster than the naive approach of enumerating all classes and then
+    filtering by image path. Instead of O(2N) expression evaluations (where N = matched
+    classes), this does O(M) evaluations where M = matching modules (typically 1-5).
+
+    Performance comparison for --dylib *CoreSymbolication* CS*:
+    - Old approach: ~2000 expression evaluations (1000 classes × 2 calls each)
+    - New approach: ~2 expression evaluations (1 matching module)
+    - Speedup: ~1000x
+
+    Args:
+        frame: LLDB frame for expression evaluation
+        dylib_pattern: Pattern to match against module paths (supports wildcards)
+        class_pattern: Optional pattern to filter class names (supports wildcards)
+        verbose: If True, print matching module info
+
+    Returns:
+        Tuple of (class_names, timing_dict, total_class_count)
+    """
+    start_time = time.time()
+    timing: TimingDict = {
+        "total": 0,
+        "setup": 0,
+        "bulk_read": 0,
+        "batching": 0,
+        "cleanup": 0,
+        "expression_count": 0,
+        "memory_read_count": 0,
+    }
+
+    process = frame.GetThread().GetProcess()
+
+    # Step 1: Get image names from ObjC runtime using objc_copyImageNames
+    # This is critical because LLDB's module paths differ from runtime paths,
+    # especially on macOS with the dyld shared cache.
+    setup_start = time.time()
+    matching_images = _get_matching_runtime_images(frame, dylib_pattern, timing)
+    timing["setup"] = time.time() - setup_start
+
+    if not matching_images:
+        timing["total"] = time.time() - start_time
+        return [], timing, 0
+
+    if verbose:
+        print(f"Found {len(matching_images)} matching image(s):")
+        for path in matching_images:
+            print(f"  {path}")
+
+    # Step 2: For each matching image, get class names using objc_copyClassNamesForImage
+    bulk_read_start = time.time()
+    all_class_names: List[str] = []
+    total_count = 0
+
+    for image_path in matching_images:
+        class_names, count = _get_classes_for_image(frame, image_path, timing)
+        total_count += count
+
+        # Apply class pattern filter if specified
+        if class_pattern:
+            class_names = [c for c in class_names if matches_pattern(c, class_pattern)]
+
+        all_class_names.extend(class_names)
+
+    timing["bulk_read"] = time.time() - bulk_read_start
+    timing["total"] = time.time() - start_time
+
+    # Remove duplicates while preserving order (a class could theoretically appear in multiple images)
+    seen = set()
+    unique_classes = []
+    for name in all_class_names:
+        if name not in seen:
+            seen.add(name)
+            unique_classes.append(name)
+
+    return unique_classes, timing, total_count
+
+
+def _get_classes_for_image(
+    frame: lldb.SBFrame,
+    image_path: str,
+    timing: TimingDict,
+) -> Tuple[List[str], int]:
+    """
+    Get all class names defined in a specific image using objc_copyClassNamesForImage.
+
+    This runtime function returns an array of class name strings (not Class pointers),
+    making it very efficient for our use case.
+
+    Args:
+        frame: LLDB frame for expression evaluation
+        image_path: Full path to the image (dylib/framework)
+        timing: Timing dict to update with expression counts
+
+    Returns:
+        Tuple of (class_names list, count)
+    """
+    process = frame.GetThread().GetProcess()
+    pointer_size = frame.GetModule().GetAddressByteSize()
+
+    # Step 1: Get the class names array pointer
+    # Escape any quotes in the path
+    escaped_path = image_path.replace('"', '\\"')
+    expr = f'(void *)(^{{ static unsigned int s_cnt = 0; static const char * const *s_nms = 0; s_nms = (const char * const *)objc_copyClassNamesForImage("{escaped_path}", &s_cnt); return (void *)s_nms; }}())'
+    result = evaluate_expression(frame, expr, timeout_seconds=10.0)
+    timing["expression_count"] += 1
+
+    if not result.IsValid() or result.GetError().Fail():
+        return [], 0
+
+    names_ptr = result.GetValueAsUnsigned()
+    if names_ptr == 0:
+        return [], 0
+
+    # Step 2: Get the count
+    count_expr = f'(unsigned int)(^{{ unsigned int c = 0; (void)objc_copyClassNamesForImage("{escaped_path}", &c); return c; }}())'
+    count_result = evaluate_expression(frame, count_expr, timeout_seconds=10.0)
+    timing["expression_count"] += 1
+
+    if not count_result.IsValid() or count_result.GetError().Fail():
+        evaluate_expression(frame, f"(void)free((void *)0x{names_ptr:x})")
+        timing["expression_count"] += 1
+        return [], 0
+
+    class_count = count_result.GetValueAsUnsigned()
+    if class_count == 0:
+        evaluate_expression(frame, f"(void)free((void *)0x{names_ptr:x})")
+        timing["expression_count"] += 1
+        return [], 0
+
+    # Step 3: Read the array of string pointers
+    array_size = class_count * pointer_size
+    error = lldb.SBError()
+    ptr_array_bytes = process.ReadMemory(names_ptr, array_size, error)
+    timing["memory_read_count"] += 1
+
+    if not error.Success():
+        evaluate_expression(frame, f"(void)free((void *)0x{names_ptr:x})")
+        timing["expression_count"] += 1
+        return [], 0
+
+    # Parse the pointer array
+    if pointer_size == 8:
+        format_str = f"{class_count}Q"
+    else:
+        format_str = f"{class_count}I"
+    string_ptrs = struct.unpack(format_str, ptr_array_bytes)
+
+    # Step 4: Read each class name string
+    class_names = []
+    for str_ptr in string_ptrs:
+        if str_ptr == 0:
+            continue
+        # Read string from memory (max 256 chars for class names)
+        class_name = process.ReadCStringFromMemory(str_ptr, 256, error)
+        timing["memory_read_count"] += 1
+        if error.Success() and class_name:
+            class_names.append(class_name)
+
+    # Free the names array
+    evaluate_expression(frame, f"(void)free((void *)0x{names_ptr:x})")
+    timing["expression_count"] += 1
+
+    return class_names, class_count
+
+
+def build_monolithic_class_enumeration_expr() -> str:
+    """
+    Build a single monolithic expression that enumerates ALL Objective-C classes.
+
+    This is a major optimization over the batched approach:
+    - Single expression evaluation instead of ~300+ batched expressions
+    - All work happens in-process, eliminating Python↔LLDB roundtrips
+    - Returns a self-contained buffer with all class names
+
+    Buffer format returned:
+        [count: 4 bytes]           - Number of classes
+        [total_len: 4 bytes]       - Total string data length
+        [offsets: (count+1)*4]     - Offsets into string data (last = total_len)
+        [strings: total_len]       - Concatenated null-terminated class names
+
+    Returns:
+        Expression string to evaluate
+    """
+    # The expression does everything in one shot:
+    # 1. Get class list via objc_copyClassList
+    # 2. Calculate total string buffer size needed
+    # 3. Allocate output buffer
+    # 4. Copy all class names into buffer with offset table
+    # 5. Free the class list
+    # 6. Return buffer pointer
+    return """
+(void *)(^{
+    unsigned int count = 0;
+    Class *classes = (Class *)objc_copyClassList(&count);
+    if (!classes || count == 0) {
+        if (classes) free(classes);
+        return (void *)0;
+    }
+
+    // First pass: calculate total string length needed
+    size_t total_len = 0;
+    for (unsigned int i = 0; i < count; i++) {
+        const char *name = (const char *)class_getName(classes[i]);
+        if (name) {
+            total_len += strlen(name) + 1;
+        }
+    }
+
+    // Buffer layout: [count:4][total_len:4][offsets:(count+1)*4][strings:total_len]
+    size_t header_size = 8;
+    size_t offsets_size = (count + 1) * sizeof(unsigned int);
+    size_t buf_size = header_size + offsets_size + total_len;
+
+    char *buf = (char *)malloc(buf_size);
+    if (!buf) {
+        free(classes);
+        return (void *)0;
+    }
+
+    // Write header
+    *(unsigned int *)buf = count;
+    *((unsigned int *)buf + 1) = (unsigned int)total_len;
+
+    // Setup pointers
+    unsigned int *offsets = (unsigned int *)(buf + header_size);
+    char *strings = buf + header_size + offsets_size;
+
+    // Second pass: copy class names
+    unsigned int offset = 0;
+    for (unsigned int i = 0; i < count; i++) {
+        const char *name = (const char *)class_getName(classes[i]);
+        if (name) {
+            offsets[i] = offset;
+            size_t len = strlen(name) + 1;
+            memcpy(strings + offset, name, len);
+            offset += len;
+        } else {
+            offsets[i] = 0xFFFFFFFF;
+        }
+    }
+    offsets[count] = offset;
+
+    free(classes);
+    return (void *)buf;
+}())
+"""
+
+
+def parse_monolithic_class_buffer(
+    buffer_ptr: int,
+    process: lldb.SBProcess,
+) -> Tuple[List[str], int]:
+    """
+    Parse the buffer returned by build_monolithic_class_enumeration_expr().
+
+    Args:
+        buffer_ptr: Pointer to the buffer in target process memory
+        process: LLDB process for memory reads
+
+    Returns:
+        Tuple of (class_names list, class_count)
+    """
+    if buffer_ptr == 0:
+        return [], 0
+
+    error = lldb.SBError()
+
+    # Read header: [count:4][total_len:4]
+    header_bytes = process.ReadMemory(buffer_ptr, 8, error)
+    if not error.Success():
+        return [], 0
+
+    count, total_len = struct.unpack("II", header_bytes)
+    if count == 0:
+        return [], 0
+
+    # Calculate sizes
+    header_size = 8
+    offsets_size = (count + 1) * 4
+    remaining_size = offsets_size + total_len
+
+    # Read rest of buffer (offsets + strings) in one read
+    data_bytes = process.ReadMemory(buffer_ptr + header_size, remaining_size, error)
+    if not error.Success():
+        return [], count
+
+    # Parse offsets
+    offsets = struct.unpack(f"{count + 1}I", data_bytes[:offsets_size])
+    string_data = data_bytes[offsets_size:]
+
+    # Extract class names
+    class_names = []
+    for i in range(count):
+        offset = offsets[i]
+        if offset == 0xFFFFFFFF:
+            continue
+
+        # Find null terminator
+        end = offset
+        while end < len(string_data) and string_data[end] != 0:
+            end += 1
+
+        try:
+            name = string_data[offset:end].decode("utf-8")
+            class_names.append(name)
+        except UnicodeDecodeError:
+            continue
+
+    return class_names, count
 
 
 def build_batch_expression(class_pointers_batch: List[int]) -> str:
@@ -1319,7 +1738,7 @@ def read_consolidated_string_buffer(
     offset_bytes = process.ReadMemory(buffer_ptr, offset_array_size, error)
 
     if not error.Success():
-        frame.EvaluateExpression(f"(void)free((void *)0x{buffer_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{buffer_ptr:x})")
         return []
 
     # Parse offsets
@@ -1331,7 +1750,7 @@ def read_consolidated_string_buffer(
     string_data = process.ReadMemory(string_data_ptr, total_string_size, error)
 
     # Free the buffer
-    frame.EvaluateExpression(f"(void)free((void *)0x{buffer_ptr:x})")
+    evaluate_expression(frame, f"(void)free((void *)0x{buffer_ptr:x})")
 
     if not error.Success():
         return []
@@ -1383,7 +1802,7 @@ def try_exact_class_match(frame: lldb.SBFrame, class_name: str) -> Tuple[Optiona
 
     # Try to get the class directly
     class_expr = f'(void *)NSClassFromString(@"{class_name}")'
-    class_result = frame.EvaluateExpression(class_expr)
+    class_result = evaluate_expression(frame, class_expr)
 
     if not class_result.IsValid() or class_result.GetError().Fail():
         return None, None
@@ -1394,7 +1813,7 @@ def try_exact_class_match(frame: lldb.SBFrame, class_name: str) -> Tuple[Optiona
 
     # Verify the class name matches (in case of partial match)
     name_expr = f"(const char *)class_getName((void *)0x{class_ptr:x})"
-    name_result = frame.EvaluateExpression(name_expr)
+    name_result = evaluate_expression(frame, name_expr)
 
     if not name_result.IsValid() or name_result.GetError().Fail():
         return None, None
@@ -1427,24 +1846,24 @@ def get_all_classes(
     Get all Objective-C classes using objc_copyClassList.
     Returns a list of class names matching the pattern.
 
-    Optimized implementation using consolidated string buffers:
-    - Batches class_getName() calls into configurable groups
-    - Consolidates string data into single buffers
-    - Reduces expression evaluations from ~10K to ~100
-    - Reduces memory reads from ~10K to ~200
+    Optimized implementation using monolithic expression:
+    - Single expression enumerates ALL classes in one shot
+    - All work happens in-process, eliminating Python↔LLDB roundtrips
+    - Only 2 expressions + 2 memory reads for full enumeration
+    - Falls back to batched approach if monolithic fails
     - Caches results per-process for instant subsequent queries
     - Fast-path for exact matches (bypasses full enumeration)
 
     For 10,000 classes:
     - Fast-path (exact match): <0.01 seconds
-    - First run: ~10-30 seconds
+    - First run (monolithic): ~1-3 seconds
     - Cached run: <0.01 seconds
 
     Args:
         frame: LLDB frame for expression evaluation
         pattern: Optional pattern to filter class names
         force_reload: If True, bypass cache and reload from runtime
-        batch_size: Number of classes to process per batch (default: DEFAULT_BATCH_SIZE)
+        batch_size: Number of classes to process per batch (fallback only)
 
     Returns:
         Tuple of (class_names, timing_dict, class_count, from_cache)
@@ -1513,144 +1932,174 @@ def get_all_classes(
         "expression_count": 0,
         "memory_read_count": 0,
     }
-    setup_start = time.time()
 
-    # Steps 1-3: Same as Phase 1/2 (get class pointer array via bulk read)
-    # Allocate count variable
-    count_var_expr = "(unsigned int *)malloc(sizeof(unsigned int))"
-    count_var_result = frame.EvaluateExpression(count_var_expr)
+    # Try MONOLITHIC approach first - single expression does everything
+    # This is dramatically faster: 2 expressions + 2 memory reads vs ~1000+ roundtrips
+    monolithic_start = time.time()
+
+    # Get optimized expression options with longer timeout for large class lists
+    expr_options = get_expression_options(timeout_seconds=60.0)
+
+    # Build and execute monolithic expression
+    monolithic_expr = build_monolithic_class_enumeration_expr()
+    monolithic_result = evaluate_expression(frame, monolithic_expr, options=expr_options)
     timing["expression_count"] += 1
 
-    if not count_var_result.IsValid() or count_var_result.GetError().Fail():
-        print("Warning: Failed to allocate count variable")
-        return []
-
-    count_var_ptr = count_var_result.GetValueAsUnsigned()
-
-    # Get class list using objc_copyClassList
-    class_list_expr = f"(void *)objc_copyClassList((unsigned int *)0x{count_var_ptr:x})"
-    class_list_result = frame.EvaluateExpression(class_list_expr)
-    timing["expression_count"] += 1
-
-    if not class_list_result.IsValid() or class_list_result.GetError().Fail():
-        print(f"Warning: objc_copyClassList failed: {class_list_result.GetError()}")
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
-        timing["expression_count"] += 1
-        return []
-
-    class_list_ptr = class_list_result.GetValueAsUnsigned()
-
-    # Read the count
-    count_read_expr = f"(unsigned int)(*(unsigned int *)0x{count_var_ptr:x})"
-    count_read_result = frame.EvaluateExpression(count_read_expr)
-    timing["expression_count"] += 1
-
-    if not count_read_result.IsValid() or count_read_result.GetError().Fail():
-        print("Warning: Failed to read class count")
-        if class_list_ptr != 0:
-            frame.EvaluateExpression(f"(void)free((void *)0x{class_list_ptr:x})")
-            timing["expression_count"] += 1
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
-        timing["expression_count"] += 1
-        return []
-
-    class_count = count_read_result.GetValueAsUnsigned()
-
-    timing["setup"] = time.time() - setup_start
-    bulk_read_start = time.time()
-
-    # Bulk read the class pointer array (same as Phase 1/2)
-    process = frame.GetThread().GetProcess()
-    pointer_size = frame.GetModule().GetAddressByteSize()
-    array_size = class_count * pointer_size
-
-    error = lldb.SBError()
-    class_array_bytes = process.ReadMemory(class_list_ptr, array_size, error)
-    timing["memory_read_count"] += 1
-
-    if not error.Success():
-        print(f"Error: Failed to read class array from memory: {error}")
-        if class_list_ptr != 0:
-            frame.EvaluateExpression(f"(void)free((void *)0x{class_list_ptr:x})")
-            timing["expression_count"] += 1
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
-        timing["expression_count"] += 1
-        return []
-
-    # Parse class pointers in Python (fast - no LLDB overhead)
-    if pointer_size == 8:
-        format_str = f"{class_count}Q"  # 64-bit unsigned pointers
-    else:
-        format_str = f"{class_count}I"  # 32-bit unsigned pointers
-
-    class_pointers = struct.unpack(format_str, class_array_bytes)
-
-    timing["bulk_read"] = time.time() - bulk_read_start
-    batching_start = time.time()
-
-    # PHASE 3 OPTIMIZATION: Use consolidated string buffers
     class_names = []
+    class_count = 0
 
-    num_batches = (len(class_pointers) + batch_size - 1) // batch_size
+    if monolithic_result.IsValid() and not monolithic_result.GetError().Fail():
+        buffer_ptr = monolithic_result.GetValueAsUnsigned()
+        if buffer_ptr != 0:
+            # Parse the monolithic buffer (2 memory reads: header + data)
+            class_names, class_count = parse_monolithic_class_buffer(buffer_ptr, process)
+            timing["memory_read_count"] += 2
 
-    if len(class_pointers) > 1000:
-        print(f"Processing {len(class_pointers)} classes in {num_batches} batches (batch_size={batch_size})...")
+            # Free the buffer
+            evaluate_expression(frame, f"(void)free((void *)0x{buffer_ptr:x})")
+            timing["expression_count"] += 1
 
-    for batch_idx in range(0, len(class_pointers), batch_size):
-        batch_end = min(batch_idx + batch_size, len(class_pointers))
-        batch = class_pointers[batch_idx:batch_end]
-        current_batch_size = len(batch)
+            timing["bulk_read"] = time.time() - monolithic_start
+            timing["total"] = time.time() - start_time
 
-        # Build compound expression with consolidated string buffer
-        batch_expr = build_batch_expression(batch)
+    # Fallback to BATCHED approach if monolithic failed
+    if not class_names:
+        # Reset timing for batched approach
+        setup_start = time.time()
 
-        # Execute batch expression
-        batch_result = frame.EvaluateExpression(batch_expr)
+        # Allocate count variable
+        count_var_expr = "(unsigned int *)malloc(sizeof(unsigned int))"
+        count_var_result = evaluate_expression(frame, count_var_expr)
         timing["expression_count"] += 1
 
-        if not batch_result.IsValid() or batch_result.GetError().Fail():
-            # Fallback: process each class individually if batch expression fails
-            for class_ptr in batch:
-                if class_ptr == 0:
-                    continue
-                class_name_expr = f"(const char *)class_getName((void *)0x{class_ptr:x})"
-                class_name_result = frame.EvaluateExpression(class_name_expr)
+        if not count_var_result.IsValid() or count_var_result.GetError().Fail():
+            print("Warning: Failed to allocate count variable")
+            return [], timing, 0, False
+
+        count_var_ptr = count_var_result.GetValueAsUnsigned()
+
+        # Get class list using objc_copyClassList
+        class_list_expr = f"(void *)objc_copyClassList((unsigned int *)0x{count_var_ptr:x})"
+        class_list_result = evaluate_expression(frame, class_list_expr)
+        timing["expression_count"] += 1
+
+        if not class_list_result.IsValid() or class_list_result.GetError().Fail():
+            print(f"Warning: objc_copyClassList failed: {class_list_result.GetError()}")
+            evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
+            timing["expression_count"] += 1
+            return [], timing, 0, False
+
+        class_list_ptr = class_list_result.GetValueAsUnsigned()
+
+        # Read the count
+        count_read_expr = f"(unsigned int)(*(unsigned int *)0x{count_var_ptr:x})"
+        count_read_result = evaluate_expression(frame, count_read_expr)
+        timing["expression_count"] += 1
+
+        if not count_read_result.IsValid() or count_read_result.GetError().Fail():
+            print("Warning: Failed to read class count")
+            if class_list_ptr != 0:
+                evaluate_expression(frame, f"(void)free((void *)0x{class_list_ptr:x})")
                 timing["expression_count"] += 1
-                if class_name_result.IsValid():
-                    class_name = class_name_result.GetSummary()
-                    if class_name:
-                        class_name = unquote_string(class_name)
-                        # Add all classes to cache (no pattern filtering here)
-                        class_names.append(class_name)
-            continue
+            evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
+            timing["expression_count"] += 1
+            return [], timing, 0, False
 
-        # Read consolidated string buffer (without pattern filtering - get all classes)
-        batch_names = read_consolidated_string_buffer(batch_result, current_batch_size, process, frame, pattern=None)
-        timing["expression_count"] += 1  # For free() in read_consolidated_string_buffer
-        timing["memory_read_count"] += 2  # One for offsets, one for string data
+        class_count = count_read_result.GetValueAsUnsigned()
 
-        class_names.extend(batch_names)
+        timing["setup"] = time.time() - setup_start
+        bulk_read_start = time.time()
 
-        # Progress indicator for large operations
-        if len(class_pointers) > 1000 and (batch_idx // batch_size) % 10 == 0 and batch_idx > 0:
-            progress = (batch_idx / len(class_pointers)) * 100
-            print(f"  Progress: {progress:.0f}%", end="\r")
+        # Bulk read the class pointer array
+        pointer_size = frame.GetModule().GetAddressByteSize()
+        array_size = class_count * pointer_size
 
-    if len(class_pointers) > 1000:
-        print()  # Clear progress line
+        error = lldb.SBError()
+        class_array_bytes = process.ReadMemory(class_list_ptr, array_size, error)
+        timing["memory_read_count"] += 1
 
-    timing["batching"] = time.time() - batching_start
-    cleanup_start = time.time()
+        if not error.Success():
+            print(f"Error: Failed to read class array from memory: {error}")
+            if class_list_ptr != 0:
+                evaluate_expression(frame, f"(void)free((void *)0x{class_list_ptr:x})")
+                timing["expression_count"] += 1
+            evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
+            timing["expression_count"] += 1
+            return [], timing, 0, False
 
-    # Clean up allocated memory
-    if class_list_ptr != 0:
-        frame.EvaluateExpression(f"(void)free((void *)0x{class_list_ptr:x})")
+        # Parse class pointers in Python (fast - no LLDB overhead)
+        if pointer_size == 8:
+            format_str = f"{class_count}Q"
+        else:
+            format_str = f"{class_count}I"
+
+        class_pointers = struct.unpack(format_str, class_array_bytes)
+
+        timing["bulk_read"] = time.time() - bulk_read_start
+        batching_start = time.time()
+
+        # Use consolidated string buffers
+        num_batches = (len(class_pointers) + batch_size - 1) // batch_size
+
+        if len(class_pointers) > 1000:
+            print(f"Processing {len(class_pointers)} classes in {num_batches} batches (batch_size={batch_size})...")
+
+        for batch_idx in range(0, len(class_pointers), batch_size):
+            batch_end = min(batch_idx + batch_size, len(class_pointers))
+            batch = class_pointers[batch_idx:batch_end]
+            current_batch_size = len(batch)
+
+            # Build compound expression with consolidated string buffer
+            batch_expr = build_batch_expression(batch)
+
+            # Execute batch expression
+            batch_result = evaluate_expression(frame, batch_expr)
+            timing["expression_count"] += 1
+
+            if not batch_result.IsValid() or batch_result.GetError().Fail():
+                # Fallback: process each class individually if batch expression fails
+                for class_ptr in batch:
+                    if class_ptr == 0:
+                        continue
+                    class_name_expr = f"(const char *)class_getName((void *)0x{class_ptr:x})"
+                    class_name_result = evaluate_expression(frame, class_name_expr)
+                    timing["expression_count"] += 1
+                    if class_name_result.IsValid():
+                        class_name = class_name_result.GetSummary()
+                        if class_name:
+                            class_name = unquote_string(class_name)
+                            class_names.append(class_name)
+                continue
+
+            # Read consolidated string buffer
+            batch_names = read_consolidated_string_buffer(
+                batch_result, current_batch_size, process, frame, pattern=None
+            )
+            timing["expression_count"] += 1
+            timing["memory_read_count"] += 2
+
+            class_names.extend(batch_names)
+
+            # Progress indicator for large operations
+            if len(class_pointers) > 1000 and (batch_idx // batch_size) % 10 == 0 and batch_idx > 0:
+                progress = (batch_idx / len(class_pointers)) * 100
+                print(f"  Progress: {progress:.0f}%", end="\r")
+
+        if len(class_pointers) > 1000:
+            print()
+
+        timing["batching"] = time.time() - batching_start
+        cleanup_start = time.time()
+
+        # Clean up allocated memory
+        if class_list_ptr != 0:
+            evaluate_expression(frame, f"(void)free((void *)0x{class_list_ptr:x})")
+            timing["expression_count"] += 1
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         timing["expression_count"] += 1
-    frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
-    timing["expression_count"] += 1
 
-    timing["cleanup"] = time.time() - cleanup_start
-    timing["total"] = time.time() - start_time
+        timing["cleanup"] = time.time() - cleanup_start
+        timing["total"] = time.time() - start_time
 
     # Store in cache (unfiltered list)
     _class_cache[pid] = {
@@ -1670,6 +2119,10 @@ def get_all_classes(
 
 def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any]) -> None:
     """Initialize the module by registering the command."""
+    global _initialized
+    if _initialized:
+        return
+    _initialized = True
     module_path = f"{__name__}.find_objc_classes"
     debugger.HandleCommand(
         'command script add -h "Find Objective-C classes. '

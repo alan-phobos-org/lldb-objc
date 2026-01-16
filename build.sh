@@ -129,12 +129,13 @@ cmd_dist() {
     cp "$ROOT_DIR/scripts/__init__.py" "$DIST_DIR/$PACKAGE_DIR/scripts/"
     cp "$ROOT_DIR"/scripts/objc_*.py "$DIST_DIR/$PACKAGE_DIR/scripts/"
 
-    # Generate version.py with embedded version
+    # Generate version.py with embedded version (strip leading 'v' if present)
+    EMBED_VERSION="${VERSION#v}"
     cat > "$DIST_DIR/$PACKAGE_DIR/scripts/version.py" << EOF
 #!/usr/bin/env python3
 """Version information for LLDB Objective-C Tools."""
 
-__version__ = "$VERSION"
+__version__ = "$EMBED_VERSION"
 __author__ = "Alan"
 __description__ = "LLDB commands for Objective-C method introspection and debugging"
 EOF

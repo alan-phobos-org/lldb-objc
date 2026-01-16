@@ -15,6 +15,7 @@ Commands that feel like native debugger features, not bolted-on scripts. Output 
 | [docs/DESIGN.md](docs/DESIGN.md) | Architecture, patterns | Major refactoring |
 | [docs/SANDBOX_DESIGN.md](docs/SANDBOX_DESIGN.md) | Sandbox scanner design | Working on osbx |
 | [docs/SANDBOX_SUMMARY.md](docs/SANDBOX_SUMMARY.md) | Sandbox testing summary | Quick reference for sandbox work |
+| [docs/DEBUGGING.md](docs/DEBUGGING.md) | LLDB Python script debugging | Debugging script failures |
 | [docs/PITFALLS.md](docs/PITFALLS.md) | Technical gotchas | Debugging failures |
 | [docs/TESTING.md](docs/TESTING.md) | Test guide | Writing tests |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Optimization | Performance work |

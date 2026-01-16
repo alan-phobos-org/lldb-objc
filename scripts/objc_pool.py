@@ -28,6 +28,11 @@ try:
 except ImportError:
     __version__ = "unknown"
 
+# Guard against double initialization
+_initialized = False
+
+from objc_utils import evaluate_expression
+
 
 def find_in_autorelease_pool(
     frame: lldb.SBFrame, class_name: str, verbose: bool = False
@@ -50,7 +55,7 @@ def find_in_autorelease_pool(
 
     # Step 1: Get the class pointer
     class_expr = f'(Class)NSClassFromString(@"{class_name}")'
-    class_result = frame.EvaluateExpression(class_expr)
+    class_result = evaluate_expression(frame, class_expr)
 
     if not class_result.IsValid() or class_result.GetError().Fail():
         return instances, ""
@@ -81,7 +86,7 @@ def find_in_autorelease_pool(
         # Let the output go to stderr naturally
         pool_expr = "(const char *)_objc_autoreleasePoolPrint()"
 
-    pool_result = frame.EvaluateExpression(pool_expr)
+    pool_result = evaluate_expression(frame, pool_expr)
 
     if not pool_result.IsValid() or pool_result.GetError().Fail():
         return instances, ""
@@ -139,14 +144,14 @@ def find_in_autorelease_pool(
             # Check if this is an instance of our target class
             # Use isKindOfClass to support subclasses
             check_expr = f"(BOOL)[(id)0x{addr:x} isKindOfClass:(Class)0x{class_ptr:x}]"
-            check_result = frame.EvaluateExpression(check_expr)
+            check_result = evaluate_expression(frame, check_expr)
 
             if check_result.IsValid() and check_result.GetValueAsUnsigned() == 1:
                 collected_addresses.add(addr)
 
                 # Get description
                 desc_expr = f"(const char *)[[(id)0x{addr:x} description] UTF8String]"
-                desc_result = frame.EvaluateExpression(desc_expr)
+                desc_result = evaluate_expression(frame, desc_expr)
 
                 description = "instance"
                 if desc_result.IsValid() and not desc_result.GetError().Fail():
@@ -219,7 +224,7 @@ def find_pool_instances_command(
     for addr, description in instances:
         # Get the actual class of this instance
         class_expr = f"(const char *)class_getName((Class)object_getClass((id)0x{addr:x}))"
-        class_result = frame.EvaluateExpression(class_expr)
+        class_result = evaluate_expression(frame, class_expr)
 
         actual_class = class_name  # Default to searched class
         if class_result.IsValid() and not class_result.GetError().Fail():
@@ -242,6 +247,10 @@ def find_pool_instances_command(
 
 def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any]) -> None:
     """Initialize the opool command when this module is loaded in LLDB."""
+    global _initialized
+    if _initialized:
+        return
+    _initialized = True
     module_path = f"{__name__}.find_pool_instances_command"
     debugger.HandleCommand(f"command script add -f {module_path} opool")
     print(f"[lldb-objc v{__version__}] 'opool' installed - Find instances in autorelease pools")

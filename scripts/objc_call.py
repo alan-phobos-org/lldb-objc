@@ -31,7 +31,11 @@ try:
 except ImportError:
     __version__ = "unknown"
 
+# Guard against double initialization
+_initialized = False
+
 from objc_utils import detect_method_type as _detect_method_type_base
+from objc_utils import evaluate_expression as eval_expr
 
 
 def detect_method_type(frame: lldb.SBFrame, receiver: str, selector_with_args: str, verbose: bool = False) -> bool:
@@ -58,7 +62,7 @@ def detect_method_type(frame: lldb.SBFrame, receiver: str, selector_with_args: s
     return not is_instance
 
 
-def evaluate_expression(
+def evaluate_and_display(
     frame: lldb.SBFrame,
     expression: str,
     result: lldb.SBCommandReturnObject,
@@ -84,7 +88,7 @@ def evaluate_expression(
     # This allows the expression evaluator to treat the result as an object
     expr_to_eval = f"(id)({expression})"
 
-    expr_result = frame.EvaluateExpression(expr_to_eval)
+    expr_result = eval_expr(frame, expr_to_eval)
 
     if not expr_result.IsValid() or expr_result.GetError().Fail():
         error_msg = str(expr_result.GetError()) if expr_result.GetError().Fail() else "Unknown error"
@@ -140,7 +144,7 @@ def call_objc_method(
 
     # If not method call syntax, treat as arbitrary Objective-C expression
     if not is_method_call:
-        evaluate_expression(frame, command, result, verbose)
+        evaluate_and_display(frame, command, result, verbose)
         return
 
     # Determine if we need to auto-detect method type
@@ -192,7 +196,7 @@ def call_objc_method(
 
         # Resolve the class using NSClassFromString
         class_expr = f'(Class)NSClassFromString(@"{class_name}")'
-        class_result = frame.EvaluateExpression(class_expr)
+        class_result = eval_expr(frame, class_expr)
 
         if not class_result.IsValid() or class_result.GetError().Fail():
             result.SetError(f"Failed to resolve class '{class_name}': {class_result.GetError()}")
@@ -209,7 +213,7 @@ def call_objc_method(
             # Get selector for verbose output
             sel_name = extract_selector_name(selector_with_args)
             sel_expr = f'(SEL)NSSelectorFromString(@"{sel_name}")'
-            sel_result = frame.EvaluateExpression(sel_expr)
+            sel_result = eval_expr(frame, sel_expr)
             if sel_result.IsValid() and not sel_result.GetError().Fail():
                 print(f"  SEL: {sel_result.GetValue()}")
 
@@ -233,7 +237,7 @@ def call_objc_method(
 
             if verbose:
                 # Try to get the value of the variable/register
-                var_result = frame.EvaluateExpression(f"(void*){var_name}")
+                var_result = eval_expr(frame, f"(void*){var_name}")
                 if var_result.IsValid() and not var_result.GetError().Fail():
                     print(f"  Receiver ({var_name}): {var_result.GetValue()}")
                 else:
@@ -257,7 +261,7 @@ def call_objc_method(
             # Get selector for verbose output
             sel_name = extract_selector_name(selector_with_args)
             sel_expr = f'(SEL)NSSelectorFromString(@"{sel_name}")'
-            sel_result = frame.EvaluateExpression(sel_expr)
+            sel_result = eval_expr(frame, sel_expr)
             if sel_result.IsValid() and not sel_result.GetError().Fail():
                 print(f"  SEL: {sel_result.GetValue()}")
 
@@ -266,7 +270,7 @@ def call_objc_method(
         print(f"\nExecuting: {call_expr}")
         print()
 
-    call_result = frame.EvaluateExpression(call_expr)
+    call_result = eval_expr(frame, call_expr)
 
     if not call_result.IsValid() or call_result.GetError().Fail():
         error_msg = str(call_result.GetError()) if call_result.GetError().Fail() else "Unknown error"
@@ -437,6 +441,10 @@ def display_result(sbvalue: lldb.SBValue) -> None:
 
 def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any]) -> None:
     """Initialize the module by registering the command."""
+    global _initialized
+    if _initialized:
+        return
+    _initialized = True
     module_path = f"{__name__}.call_objc_method"
     debugger.HandleCommand(
         'command script add -h "Call Objective-C methods or evaluate expressions. '

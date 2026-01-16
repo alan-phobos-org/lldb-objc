@@ -41,7 +41,11 @@ try:
 except ImportError:
     __version__ = "unknown"
 
+# Guard against double initialization
+_initialized = False
+
 from objc_core import unquote_string
+from objc_utils import evaluate_expression
 
 # Import class cache from objc_cls if available (for reuse)
 try:
@@ -98,7 +102,7 @@ def get_all_protocols(frame: lldb.SBFrame, pattern: Optional[str] = None) -> Tup
 
     # Allocate count variable
     count_var_expr = "(unsigned int *)malloc(sizeof(unsigned int))"
-    count_var_result = frame.EvaluateExpression(count_var_expr)
+    count_var_result = evaluate_expression(frame, count_var_expr)
     timing["expression_count"] += 1
 
     if not count_var_result.IsValid() or count_var_result.GetError().Fail():
@@ -108,11 +112,11 @@ def get_all_protocols(frame: lldb.SBFrame, pattern: Optional[str] = None) -> Tup
 
     # Get protocol list
     proto_list_expr = f"(void *)objc_copyProtocolList((unsigned int *)0x{count_var_ptr:x})"
-    proto_list_result = frame.EvaluateExpression(proto_list_expr)
+    proto_list_result = evaluate_expression(frame, proto_list_expr)
     timing["expression_count"] += 1
 
     if not proto_list_result.IsValid() or proto_list_result.GetError().Fail():
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         timing["expression_count"] += 1
         return [], timing
 
@@ -120,21 +124,21 @@ def get_all_protocols(frame: lldb.SBFrame, pattern: Optional[str] = None) -> Tup
 
     # Read the count
     count_read_expr = f"(unsigned int)(*(unsigned int *)0x{count_var_ptr:x})"
-    count_read_result = frame.EvaluateExpression(count_read_expr)
+    count_read_result = evaluate_expression(frame, count_read_expr)
     timing["expression_count"] += 1
 
     if not count_read_result.IsValid() or count_read_result.GetError().Fail():
         if proto_list_ptr != 0:
-            frame.EvaluateExpression(f"(void)free((void *)0x{proto_list_ptr:x})")
+            evaluate_expression(frame, f"(void)free((void *)0x{proto_list_ptr:x})")
             timing["expression_count"] += 1
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         timing["expression_count"] += 1
         return [], timing
 
     proto_count = count_read_result.GetValueAsUnsigned()
 
     if proto_count == 0 or proto_list_ptr == 0:
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         timing["expression_count"] += 1
         return [], timing
 
@@ -146,9 +150,9 @@ def get_all_protocols(frame: lldb.SBFrame, pattern: Optional[str] = None) -> Tup
 
     if not error.Success():
         if proto_list_ptr != 0:
-            frame.EvaluateExpression(f"(void)free((void *)0x{proto_list_ptr:x})")
+            evaluate_expression(frame, f"(void)free((void *)0x{proto_list_ptr:x})")
             timing["expression_count"] += 1
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         timing["expression_count"] += 1
         return [], timing
 
@@ -183,7 +187,7 @@ def get_all_protocols(frame: lldb.SBFrame, pattern: Optional[str] = None) -> Tup
         batch_expr += """    return (void *)info;
 }())
 """
-        batch_result = frame.EvaluateExpression(batch_expr)
+        batch_result = evaluate_expression(frame, batch_expr)
         timing["expression_count"] += 1
 
         if batch_result.IsValid() and not batch_result.GetError().Fail():
@@ -206,7 +210,7 @@ def get_all_protocols(frame: lldb.SBFrame, pattern: Optional[str] = None) -> Tup
                                 if pattern is None or _matches_pattern(proto_name, pattern):
                                     protocol_names.append(proto_name)
 
-                frame.EvaluateExpression(f"(void)free((void *)0x{info_ptr:x})")
+                evaluate_expression(frame, f"(void)free((void *)0x{info_ptr:x})")
                 timing["expression_count"] += 1
         else:
             # Fallback to individual calls
@@ -214,7 +218,7 @@ def get_all_protocols(frame: lldb.SBFrame, pattern: Optional[str] = None) -> Tup
                 if proto_ptr == 0:
                     continue
                 name_expr = f"(const char *)protocol_getName((void *)0x{proto_ptr:x})"
-                name_result = frame.EvaluateExpression(name_expr)
+                name_result = evaluate_expression(frame, name_expr)
                 timing["expression_count"] += 1
 
                 if name_result.IsValid() and not name_result.GetError().Fail():
@@ -226,9 +230,9 @@ def get_all_protocols(frame: lldb.SBFrame, pattern: Optional[str] = None) -> Tup
 
     # Clean up
     if proto_list_ptr != 0:
-        frame.EvaluateExpression(f"(void)free((void *)0x{proto_list_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{proto_list_ptr:x})")
         timing["expression_count"] += 1
-    frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+    evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
     timing["expression_count"] += 1
 
     timing["total"] = time.time() - start_time
@@ -248,7 +252,7 @@ def get_protocol_pointer(frame: lldb.SBFrame, protocol_name: str) -> int:
         Protocol pointer address, or 0 if not found
     """
     proto_expr = f'(void *)objc_getProtocol("{protocol_name}")'
-    proto_result = frame.EvaluateExpression(proto_expr)
+    proto_result = evaluate_expression(frame, proto_expr)
 
     if not proto_result.IsValid() or proto_result.GetError().Fail():
         return 0
@@ -272,7 +276,7 @@ def check_class_conforms_to_protocol(frame: lldb.SBFrame, class_ptr: int, protoc
         return False
 
     conforms_expr = f"(BOOL)class_conformsToProtocol((Class)0x{class_ptr:x}, (void *)0x{protocol_ptr:x})"
-    conforms_result = frame.EvaluateExpression(conforms_expr)
+    conforms_result = evaluate_expression(frame, conforms_expr)
 
     if not conforms_result.IsValid() or conforms_result.GetError().Fail():
         return False
@@ -295,7 +299,7 @@ def get_class_superclass(frame: lldb.SBFrame, class_ptr: int) -> int:
         return 0
 
     super_expr = f"(void *)class_getSuperclass((Class)0x{class_ptr:x})"
-    super_result = frame.EvaluateExpression(super_expr)
+    super_result = evaluate_expression(frame, super_expr)
 
     if not super_result.IsValid() or super_result.GetError().Fail():
         return 0
@@ -389,7 +393,7 @@ def find_conforming_classes(
         batch_expr += """    return (void *)ptrs;
 }())
 """
-        batch_result = frame.EvaluateExpression(batch_expr)
+        batch_result = evaluate_expression(frame, batch_expr)
         timing["expression_count"] += 1
 
         if batch_result.IsValid() and not batch_result.GetError().Fail():
@@ -409,7 +413,7 @@ def find_conforming_classes(
                         if class_ptr != 0:
                             class_ptr_map[class_name] = class_ptr
 
-                frame.EvaluateExpression(f"(void)free((void *)0x{ptrs_addr:x})")
+                evaluate_expression(frame, f"(void)free((void *)0x{ptrs_addr:x})")
                 timing["expression_count"] += 1
 
     # Now check conformance in batches
@@ -435,7 +439,7 @@ def find_conforming_classes(
         batch_expr += """    return (void *)results;
 }())
 """
-        batch_result = frame.EvaluateExpression(batch_expr)
+        batch_result = evaluate_expression(frame, batch_expr)
         timing["expression_count"] += 1
 
         if batch_result.IsValid() and not batch_result.GetError().Fail():
@@ -450,7 +454,7 @@ def find_conforming_classes(
                         if results_bytes[i] != 0:
                             conforming_classes.append((class_name, class_ptr))
 
-                frame.EvaluateExpression(f"(void)free((void *)0x{results_addr:x})")
+                evaluate_expression(frame, f"(void)free((void *)0x{results_addr:x})")
                 timing["expression_count"] += 1
 
         if verbose and batch_start > 0 and batch_start % 500 == 0:
@@ -507,7 +511,7 @@ def _enumerate_all_classes(frame: lldb.SBFrame, timing: Dict[str, Any]) -> Tuple
 
     # Allocate count variable
     count_var_expr = "(unsigned int *)malloc(sizeof(unsigned int))"
-    count_var_result = frame.EvaluateExpression(count_var_expr)
+    count_var_result = evaluate_expression(frame, count_var_expr)
     timing["expression_count"] += 1
 
     if not count_var_result.IsValid() or count_var_result.GetError().Fail():
@@ -517,11 +521,11 @@ def _enumerate_all_classes(frame: lldb.SBFrame, timing: Dict[str, Any]) -> Tuple
 
     # Get class list
     class_list_expr = f"(void *)objc_copyClassList((unsigned int *)0x{count_var_ptr:x})"
-    class_list_result = frame.EvaluateExpression(class_list_expr)
+    class_list_result = evaluate_expression(frame, class_list_expr)
     timing["expression_count"] += 1
 
     if not class_list_result.IsValid() or class_list_result.GetError().Fail():
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         timing["expression_count"] += 1
         return [], 0
 
@@ -529,16 +533,16 @@ def _enumerate_all_classes(frame: lldb.SBFrame, timing: Dict[str, Any]) -> Tuple
 
     # Read count
     count_read_expr = f"(unsigned int)(*(unsigned int *)0x{count_var_ptr:x})"
-    count_read_result = frame.EvaluateExpression(count_read_expr)
+    count_read_result = evaluate_expression(frame, count_read_expr)
     timing["expression_count"] += 1
 
     class_count = count_read_result.GetValueAsUnsigned() if count_read_result.IsValid() else 0
 
     if class_count == 0:
         if class_list_ptr != 0:
-            frame.EvaluateExpression(f"(void)free((void *)0x{class_list_ptr:x})")
+            evaluate_expression(frame, f"(void)free((void *)0x{class_list_ptr:x})")
             timing["expression_count"] += 1
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         timing["expression_count"] += 1
         return [], 0
 
@@ -550,9 +554,9 @@ def _enumerate_all_classes(frame: lldb.SBFrame, timing: Dict[str, Any]) -> Tuple
 
     if not error.Success():
         if class_list_ptr != 0:
-            frame.EvaluateExpression(f"(void)free((void *)0x{class_list_ptr:x})")
+            evaluate_expression(frame, f"(void)free((void *)0x{class_list_ptr:x})")
             timing["expression_count"] += 1
-        frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
         timing["expression_count"] += 1
         return [], class_count
 
@@ -583,7 +587,7 @@ def _enumerate_all_classes(frame: lldb.SBFrame, timing: Dict[str, Any]) -> Tuple
         batch_expr += """    return (void *)info;
 }())
 """
-        batch_result = frame.EvaluateExpression(batch_expr)
+        batch_result = evaluate_expression(frame, batch_expr)
         timing["expression_count"] += 1
 
         if batch_result.IsValid() and not batch_result.GetError().Fail():
@@ -604,14 +608,14 @@ def _enumerate_all_classes(frame: lldb.SBFrame, timing: Dict[str, Any]) -> Tuple
                             if error.Success() and class_name:
                                 class_names.append(class_name)
 
-                frame.EvaluateExpression(f"(void)free((void *)0x{info_ptr:x})")
+                evaluate_expression(frame, f"(void)free((void *)0x{info_ptr:x})")
                 timing["expression_count"] += 1
 
     # Clean up
     if class_list_ptr != 0:
-        frame.EvaluateExpression(f"(void)free((void *)0x{class_list_ptr:x})")
+        evaluate_expression(frame, f"(void)free((void *)0x{class_list_ptr:x})")
         timing["expression_count"] += 1
-    frame.EvaluateExpression(f"(void)free((void *)0x{count_var_ptr:x})")
+    evaluate_expression(frame, f"(void)free((void *)0x{count_var_ptr:x})")
     timing["expression_count"] += 1
 
     return class_names, class_count
@@ -668,7 +672,7 @@ def group_classes_by_inheritance(
         batch_expr += """    return (void *)ptrs;
 }())
 """
-        batch_result = frame.EvaluateExpression(batch_expr)
+        batch_result = evaluate_expression(frame, batch_expr)
 
         if batch_result.IsValid() and not batch_result.GetError().Fail():
             ptrs_addr = batch_result.GetValueAsUnsigned()
@@ -694,7 +698,7 @@ def group_classes_by_inheritance(
                             if error.Success() and super_name:
                                 superclass_map[class_name] = super_name
 
-                frame.EvaluateExpression(f"(void)free((void *)0x{ptrs_addr:x})")
+                evaluate_expression(frame, f"(void)free((void *)0x{ptrs_addr:x})")
 
     # Find "root" conforming classes (those whose superclass doesn't conform)
     root_classes = []
@@ -872,6 +876,10 @@ def find_objc_protocol_conformance(
 
 def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any]) -> None:
     """Initialize the module by registering the command."""
+    global _initialized
+    if _initialized:
+        return
+    _initialized = True
     module_path = f"{__name__}.find_objc_protocol_conformance"
     debugger.HandleCommand(
         'command script add -h "Find Objective-C classes that conform to a protocol. '

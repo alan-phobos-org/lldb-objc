@@ -63,11 +63,16 @@ try:
 except ImportError:
     __version__ = "unknown"
 
+# Guard against double initialization
+_initialized = False
+
 # Try to import lldb - may not be available during unit tests
 try:
     import lldb
+    from objc_utils import evaluate_expression
 except ImportError:
     lldb = None
+    evaluate_expression = None
 
 # Batch size for testing writability (consistent with ocls)
 DEFAULT_BATCH_SIZE = 35
@@ -521,7 +526,7 @@ def get_container_path(frame) -> Optional[str]:
         return None
 
     expr = "(NSString *)NSHomeDirectory()"
-    result = frame.EvaluateExpression(expr)
+    result = evaluate_expression(frame, expr)
     if result.GetError().Success():
         summary = result.GetSummary()
         if summary:
@@ -536,7 +541,7 @@ def get_temp_directory(frame) -> Optional[str]:
         return None
 
     expr = "(NSString *)NSTemporaryDirectory()"
-    result = frame.EvaluateExpression(expr)
+    result = evaluate_expression(frame, expr)
     if result.GetError().Success():
         summary = result.GetSummary()
         if summary:
@@ -576,7 +581,7 @@ def detect_platform(frame) -> str:
 
     # Check for iOS-specific path existence
     expr = '(BOOL)[[NSFileManager defaultManager] fileExistsAtPath:@"/var/mobile"]'
-    result = frame.EvaluateExpression(expr)
+    result = evaluate_expression(frame, expr)
     if result.GetValueAsUnsigned() == 1:
         return "iOS"
 
@@ -611,7 +616,7 @@ def is_sandboxed(frame) -> bool:
     if home:
         escaped_home = escape_objc_string(home)
         expr = f'(int)access("{escaped_home}", 2)'  # W_OK = 2
-        result = frame.EvaluateExpression(expr)
+        result = evaluate_expression(frame, expr)
         if result.GetError().Success():
             # -1 means access denied (sandboxed)
             return result.GetValueAsSigned() != 0
@@ -639,7 +644,7 @@ def check_path_type(frame, path: str) -> str:
     }}()
     '''
 
-    result = frame.EvaluateExpression(expr)
+    result = evaluate_expression(frame, expr)
     if result.GetError().Success():
         type_str = result.GetSummary()
         if type_str:
@@ -706,7 +711,7 @@ def batch_check_writable(frame, paths: List[str], batch_size: int = DEFAULT_BATC
         }}()
         """
 
-        result = frame.EvaluateExpression(expr)
+        result = evaluate_expression(frame, expr)
         if result.GetError().Success():
             # Parse NSArray of NSNumber(BOOL) results
             # Note: NSNumber bool values must be read via GetSummary() which returns "YES"/"NO"
@@ -743,7 +748,7 @@ def canonicalize_path(frame, path: str) -> str:
     escaped_path = escape_objc_string(path)
 
     expr = f'(NSString *)[[@"{escaped_path}" stringByExpandingTildeInPath] stringByResolvingSymlinksInPath]'
-    result = frame.EvaluateExpression(expr)
+    result = evaluate_expression(frame, expr)
     if result.GetError().Success():
         summary = result.GetSummary()
         if summary:
@@ -813,7 +818,7 @@ def enumerate_directory(
     }}()
     '''
 
-    result = frame.EvaluateExpression(expr)
+    result = evaluate_expression(frame, expr)
     if not result.GetError().Success():
         return [], -1
 
@@ -1227,6 +1232,10 @@ Examples:
 
 def __lldb_init_module(debugger, internal_dict: Dict[str, Any]) -> None:
     """Initialize the module by registering the command."""
+    global _initialized
+    if _initialized:
+        return
+    _initialized = True
     module_path = f"{__name__}.osbx_command"
     debugger.HandleCommand(
         'command script add -h "Scan sandbox filesystem access. '

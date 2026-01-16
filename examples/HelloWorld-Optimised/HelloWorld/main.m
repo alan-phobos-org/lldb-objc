@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#include <signal.h>
 
 // Same code as HelloWorld but will be compiled with heavy optimizations
 // and stripped of symbols to test LLDB command robustness
@@ -56,6 +57,7 @@ int main(int argc, const char * argv[]) {
         Greeter *greeter = [[Greeter alloc] init];
         [greeter sayHello:@"World"];
         [greeter sayHello:@"LLDB"];
+        (void)signal(SIGTRAP, SIG_IGN); raise(SIGTRAP); (void)signal(SIGTRAP, SIG_DFL);
 
         NSInteger sum = [greeter add:42 to:58];
         NSLog(@"Sum is: %ld", (long)sum);

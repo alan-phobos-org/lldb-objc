@@ -30,6 +30,11 @@ try:
 except ImportError:
     __version__ = "unknown"
 
+# Guard against double initialization
+_initialized = False
+
+from objc_utils import evaluate_expression
+
 # Import helper functions from objc_cls
 try:
     from objc_cls import get_class_hierarchy, get_class_ivars, decode_type_encoding
@@ -76,7 +81,7 @@ def read_ivar_value(process: lldb.SBProcess, frame: lldb.SBFrame, addr: int, typ
         # Get class name first
         class_name = None
         class_expr = f"(const char *)class_getName(object_getClass((id)0x{obj_ptr:x}))"
-        class_result = frame.EvaluateExpression(class_expr)
+        class_result = evaluate_expression(frame, class_expr)
         if class_result.IsValid():
             class_name_ptr = class_result.GetValueAsUnsigned()
             if class_name_ptr != 0:
@@ -85,7 +90,7 @@ def read_ivar_value(process: lldb.SBProcess, frame: lldb.SBFrame, addr: int, typ
         # Get object description
         desc = None
         desc_expr = f"(const char *)[[(id)0x{obj_ptr:x} description] UTF8String]"
-        desc_result = frame.EvaluateExpression(desc_expr)
+        desc_result = evaluate_expression(frame, desc_expr)
 
         if desc_result.IsValid():
             desc_ptr = desc_result.GetValueAsUnsigned()
@@ -116,7 +121,7 @@ def read_ivar_value(process: lldb.SBProcess, frame: lldb.SBFrame, addr: int, typ
             return 0, "(nil)"
 
         class_expr = f"(const char *)class_getName((Class)0x{class_ptr:x})"
-        class_result = frame.EvaluateExpression(class_expr)
+        class_result = evaluate_expression(frame, class_expr)
         if class_result.IsValid():
             name_ptr = class_result.GetValueAsUnsigned()
             if name_ptr != 0:
@@ -132,7 +137,7 @@ def read_ivar_value(process: lldb.SBProcess, frame: lldb.SBFrame, addr: int, typ
             return 0, "(NULL)"
 
         sel_expr = f"(const char *)sel_getName((SEL)0x{sel_ptr:x})"
-        sel_result = frame.EvaluateExpression(sel_expr)
+        sel_result = evaluate_expression(frame, sel_expr)
         if sel_result.IsValid():
             name_ptr = sel_result.GetValueAsUnsigned()
             if name_ptr != 0:
@@ -319,7 +324,7 @@ def inspect_object(frame: lldb.SBFrame, obj_input: str) -> str:
     else:
         # Evaluate as expression to get the object pointer value
         var_expr = f"{obj_input}"
-        var_result = frame.EvaluateExpression(var_expr)
+        var_result = evaluate_expression(frame, var_expr)
 
         if not var_result.IsValid() or var_result.GetError().Fail():
             return f"Error: Could not evaluate expression '{obj_input}': {var_result.GetError()}"
@@ -333,7 +338,7 @@ def inspect_object(frame: lldb.SBFrame, obj_input: str) -> str:
 
     # Step 2: Validate it's an Objective-C object and get class name
     class_expr = f"(const char *)class_getName((Class)[(id)0x{obj_addr:x} class])"
-    class_result = frame.EvaluateExpression(class_expr)
+    class_result = evaluate_expression(frame, class_expr)
 
     if not class_result.IsValid() or class_result.GetError().Fail():
         return f"Error: Not a valid Objective-C object at 0x{obj_addr:x}: {class_result.GetError()}"
@@ -349,7 +354,7 @@ def inspect_object(frame: lldb.SBFrame, obj_input: str) -> str:
 
     # Step 3: Get object description
     desc_expr = f"(const char *)[[(id)0x{obj_addr:x} description] UTF8String]"
-    desc_result = frame.EvaluateExpression(desc_expr)
+    desc_result = evaluate_expression(frame, desc_expr)
 
     description = ""
     if desc_result.IsValid() and not desc_result.GetError().Fail():
@@ -406,6 +411,10 @@ def inspect_instance_command(
 
 def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any]) -> None:
     """Initialize the oinstance command when this module is loaded in LLDB."""
+    global _initialized
+    if _initialized:
+        return
+    _initialized = True
     module_path = f"{__name__}.inspect_instance_command"
     debugger.HandleCommand(f"command script add -f {module_path} oinstance")
     print(f"[lldb-objc v{__version__}] 'oinstance' installed - Inspect Objective-C object instances")

@@ -32,6 +32,9 @@ try:
 except ImportError:
     __version__ = "unknown"
 
+# Guard against double initialization
+_initialized = False
+
 from objc_llm import (
     get_disassembly,
     build_context,
@@ -181,6 +184,10 @@ def explain_command(
 
 def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any]) -> None:
     """Initialize the oexplain command when this module is loaded in LLDB."""
+    global _initialized
+    if _initialized:
+        return
+    _initialized = True
     module_path = f"{__name__}.explain_command"
     debugger.HandleCommand(f"command script add -f {module_path} oexplain")
     print(f"[lldb-objc v{__version__}] 'oexplain' installed - Explain disassembly with LLM")

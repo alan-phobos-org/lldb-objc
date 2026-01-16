@@ -121,6 +121,7 @@ def install():
         "objc_llm.py",
         "objc_utils.py",
         "objc_core.py",
+        "objc_sandbox.py",
         "version.py",
     ]
 
@@ -166,6 +167,7 @@ def install():
     print("  oprotos    - Find classes conforming to a protocol")
     print("  opool      - Find instances in autorelease pools")
     print("  oinstance  - Inspect Objective-C object instances")
+    print("  osbx       - Show sandbox restrictions for process")
     print("  oexplain   - Explain disassembly via LLM")
     print("  odecompile - Decompile function via LLM")
     print("  oreload    - Reload all commands (useful for development)")
