@@ -115,7 +115,7 @@ def breakpoint_on_objc_method(
     )
 
     if verbose:
-        print(f"[DEBUG] resolve_method_address returned:")
+        print("[DEBUG] resolve_method_address returned:")
         print(f"[DEBUG]   resolved_addr: {resolved_addr}")
         print(f"[DEBUG]   resolved_addr.IsValid(): {resolved_addr.IsValid()}")
         print(f"[DEBUG]   class_ptr: 0x{class_ptr:x}")
