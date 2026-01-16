@@ -175,7 +175,7 @@ def resolve_method_address(
     selector: str,
     is_instance_method: bool,
     verbose: bool = False,
-) -> Tuple[lldb.SBAddress, int, int, Optional[str]]:
+) -> Tuple[lldb.SBAddress, int, int, Optional[str], int]:
     """
     Resolve an Objective-C method to its implementation address.
 
@@ -184,7 +184,7 @@ def resolve_method_address(
     2. NSSelectorFromString() to get SEL pointer
     3. object_getClass() for metaclass (class methods)
     4. class_getMethodImplementation() to get IMP address
-    5. ResolveLoadAddress() to get proper SBAddress for breakpoints
+    5. ResolveLoadAddress() to get SBAddress for symbol lookup
 
     Args:
         frame: The LLDB SBFrame to use for expression evaluation
@@ -194,9 +194,11 @@ def resolve_method_address(
         verbose: If True, print resolution details
 
     Returns:
-        Tuple of (resolved_address, class_ptr, sel_ptr, error_message)
-        - resolved_address: lldb.SBAddress (invalid on error)
+        Tuple of (resolved_address, class_ptr, sel_ptr, error_message, raw_imp_addr)
+        - resolved_address: lldb.SBAddress (for symbol lookup; may be invalid on error)
         - class_ptr, sel_ptr: int pointers for reference
+        - error_message: None on success, error string on failure
+        - raw_imp_addr: The raw IMP address from class_getMethodImplementation (use this for breakpoints)
         On error, resolved_address is invalid and error_message describes the issue
     """
     # Step 1: Get the class using NSClassFromString
@@ -212,6 +214,7 @@ def resolve_method_address(
             0,
             0,
             f"Failed to resolve class '{class_name}': {class_result.GetError()}",
+            0,
         )
 
     class_ptr = class_result.GetValueAsUnsigned()
@@ -220,7 +223,7 @@ def resolve_method_address(
         print(f"  Class: {class_result.GetValue()}")
 
     if class_ptr == 0:
-        return invalid_addr, 0, 0, f"Class '{class_name}' not found"
+        return invalid_addr, 0, 0, f"Class '{class_name}' not found", 0
 
     # Step 2: Get the selector using NSSelectorFromString
     sel_expr = f'(SEL)NSSelectorFromString(@"{selector}")'
@@ -232,6 +235,7 @@ def resolve_method_address(
             class_ptr,
             0,
             f"Failed to resolve selector '{selector}': {sel_result.GetError()}",
+            0,
         )
 
     sel_ptr = sel_result.GetValueAsUnsigned()
@@ -240,7 +244,7 @@ def resolve_method_address(
         print(f"  SEL: {sel_result.GetValue()}")
 
     if sel_ptr == 0:
-        return invalid_addr, class_ptr, 0, f"Selector '{selector}' not found"
+        return invalid_addr, class_ptr, 0, f"Selector '{selector}' not found", 0
 
     # Step 3: For class methods, get the metaclass
     lookup_class_ptr = class_ptr
@@ -254,6 +258,7 @@ def resolve_method_address(
                 class_ptr,
                 sel_ptr,
                 f"Failed to get metaclass: {metaclass_result.GetError()}",
+                0,
             )
 
         lookup_class_ptr = metaclass_result.GetValueAsUnsigned()
@@ -268,6 +273,7 @@ def resolve_method_address(
             class_ptr,
             sel_ptr,
             f"Failed to get method implementation: {imp_result.GetError()}",
+            0,
         )
 
     imp_addr = imp_result.GetValueAsUnsigned()
@@ -275,18 +281,21 @@ def resolve_method_address(
     if imp_addr == 0:
         if verbose:
             print(f"  IMP: {imp_result.GetValue()}")
-        return invalid_addr, class_ptr, sel_ptr, "Method implementation not found"
+        return invalid_addr, class_ptr, sel_ptr, "Method implementation not found", 0
 
     # Step 5: Resolve load address to SBAddress and check for forwarding or inheritance
     addr = target.ResolveLoadAddress(imp_addr)
     inherited_from = None
 
     if not addr.IsValid():
+        # SBAddress resolution failed, but we still have the raw IMP - return it
+        # The caller can still use the raw address for breakpoints
         return (
             invalid_addr,
             class_ptr,
             sel_ptr,
-            f"Failed to resolve load address 0x{imp_addr:x} to valid address",
+            None,  # Not an error - we have the raw address
+            imp_addr,
         )
 
     symbol = addr.GetSymbol()
@@ -306,6 +315,7 @@ def resolve_method_address(
                         f"Method not implemented: {method_type} method '{selector}' "
                         f"on class '{class_name}' resolves to forwarding stub ({symbol_name})"
                     ),
+                    imp_addr,
                 )
 
             # Check if method is inherited from a superclass
@@ -321,7 +331,7 @@ def resolve_method_address(
         else:
             print(f"  IMP: {imp_result.GetValue()}")
 
-    return addr, class_ptr, sel_ptr, None
+    return addr, class_ptr, sel_ptr, None, imp_addr
 
 
 def detect_method_type(frame: lldb.SBFrame, class_name: str, selector: str, verbose: bool = False) -> bool:

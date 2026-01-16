@@ -28,22 +28,32 @@ lldb-objc provides LLDB Python scripts for enhanced Objective-C debugging, inclu
 
 ### The "error 9 sending breakpoint request" Problem
 
-**Root cause**: Using `BreakpointCreateBySBAddress(SBAddress)` instead of `BreakpointCreateByAddress(uint64_t)`.
-
-The `SBAddress` includes section-relative context that can cause the GDB remote protocol packet to be malformed for iOS shared cache binaries. Using the raw load address (like `b <addr>` does) bypasses this issue.
-
 **Key insight**: If `b <addr>` works but `obrk` fails with the same address, the problem is in how the breakpoint is created, not the environment.
+
+**Root cause**: Going through `SBAddress` at all can cause issues. The `class_getMethodImplementation()` runtime call returns a load address directly - we should use that raw address without any intermediate transformations.
 
 ### The Fix
 
+1. Use the raw IMP address directly from `class_getMethodImplementation()`:
 ```python
-# Wrong - includes section context that can cause issues:
-breakpoint = target.BreakpointCreateBySBAddress(resolved_addr)
-
-# Correct - matches `b <addr>` behavior:
-load_addr = resolved_addr.GetLoadAddress(target)
-breakpoint = target.BreakpointCreateByAddress(load_addr)
+# resolve_method_address now returns raw_imp_addr as the last element
+resolved_addr, class_ptr, sel_ptr, error, raw_imp_addr = resolve_method_address(...)
+load_addr = raw_imp_addr  # Use this directly, not resolved_addr.GetLoadAddress()
 ```
+
+2. Use `HandleCommand` with `breakpoint set -a` to ensure exact CLI parity:
+```python
+cmd = f"breakpoint set -a 0x{load_addr:x} -N '{method_name}'"
+interpreter.HandleCommand(cmd, cmd_result)
+```
+
+### Debugging with --verbose
+
+Use `obrk --verbose -[Class method]` or `obrk -v -[Class method]` to see detailed debug output:
+- Target/process state
+- Raw IMP address vs SBAddress comparison
+- Module/section info
+- Exact command being executed
 
 See `docs/IOS_BREAKPOINT_ERRORS_DESIGN.md` for detailed analysis.
 
