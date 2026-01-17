@@ -49,19 +49,32 @@ def _extract_nsdata_bytes(target: lldb.SBTarget, nsdata_value: lldb.SBValue, ver
     Returns: bytes object or None if extraction fails
     """
     if not nsdata_value.IsValid():
+        if verbose:
+            print("[DEBUG] NSData value is invalid")
+        return None
+
+    data_ptr = nsdata_value.GetValueAsUnsigned()
+    if data_ptr == 0:
+        if verbose:
+            print("[DEBUG] NSData pointer is NULL")
         return None
 
     # Get the bytes pointer and length
     expr = f"""
     @import Foundation;
-    NSData *data_obj = (NSData *){nsdata_value.GetValueAsUnsigned()};
+    NSData *data_obj = (NSData *){data_ptr};
     (void *)[data_obj bytes];
     """
 
     bytes_result = target.EvaluateExpression(expr)
-    if not bytes_result.IsValid() or bytes_result.GetError().Fail():
+    if not bytes_result.IsValid():
         if verbose:
-            print(f"[DEBUG] Failed to get bytes pointer: {bytes_result.GetError()}")
+            print("[DEBUG] Failed to get bytes pointer: result invalid")
+        return None
+
+    if bytes_result.GetError().Fail():
+        if verbose:
+            print(f"[DEBUG] Failed to get bytes pointer: {bytes_result.GetError().GetCString()}")
         return None
 
     bytes_ptr = bytes_result.GetValueAsUnsigned()
@@ -69,20 +82,40 @@ def _extract_nsdata_bytes(target: lldb.SBTarget, nsdata_value: lldb.SBValue, ver
     # Get length
     expr_len = f"""
     @import Foundation;
-    NSData *data_obj = (NSData *){nsdata_value.GetValueAsUnsigned()};
+    NSData *data_obj = (NSData *){data_ptr};
     (unsigned long)[data_obj length];
     """
 
     len_result = target.EvaluateExpression(expr_len)
-    if not len_result.IsValid() or len_result.GetError().Fail():
+    if not len_result.IsValid():
         if verbose:
-            print(f"[DEBUG] Failed to get data length: {len_result.GetError()}")
+            print("[DEBUG] Failed to get data length: result invalid")
+        return None
+
+    if len_result.GetError().Fail():
+        if verbose:
+            print(f"[DEBUG] Failed to get data length: {len_result.GetError().GetCString()}")
         return None
 
     data_length = len_result.GetValueAsUnsigned()
 
-    if data_length == 0 or bytes_ptr == 0:
+    if verbose:
+        print(f"[DEBUG] NSData has length {data_length}, bytes pointer {hex(bytes_ptr) if bytes_ptr else 'NULL'}")
+
+    if data_length == 0:
         return b""
+
+    if bytes_ptr == 0:
+        if verbose:
+            print("[DEBUG] Bytes pointer is NULL for non-empty NSData")
+        return None
+
+    # Limit data size to avoid memory issues
+    max_size = 1024 * 1024  # 1MB limit
+    if data_length > max_size:
+        if verbose:
+            print(f"[DEBUG] NSData size {data_length} exceeds maximum {max_size}, truncating")
+        data_length = max_size
 
     # Read the raw bytes from memory
     process = target.GetProcess()
@@ -91,8 +124,11 @@ def _extract_nsdata_bytes(target: lldb.SBTarget, nsdata_value: lldb.SBValue, ver
 
     if error.Fail():
         if verbose:
-            print(f"[DEBUG] Failed to read memory: {error}")
+            print(f"[DEBUG] Failed to read memory: {error.GetCString()}")
         return None
+
+    if verbose:
+        print(f"[DEBUG] Successfully read {len(data)} bytes from memory")
 
     return data
 
@@ -146,11 +182,18 @@ def _parse_keychain_dict(
 
     result_dict = {"class": class_value}
 
+    # Get the dictionary pointer value
+    dict_ptr = dict_value.GetValueAsUnsigned()
+    if dict_ptr == 0:
+        if verbose:
+            print("[DEBUG] dict_value pointer is NULL")
+        return result_dict
+
     try:
         # Get all keys from the dictionary
         expr = f"""
         @import Foundation;
-        NSDictionary *dict = (NSDictionary *){dict_value.GetValueAsUnsigned()};
+        NSDictionary *dict = (NSDictionary *){dict_ptr};
         (NSArray *)[dict allKeys];
         """
 
@@ -159,6 +202,8 @@ def _parse_keychain_dict(
             if verbose:
                 error_msg = keys_result.GetError().GetCString() if keys_result.IsValid() else "Invalid result"
                 print(f"[DEBUG] Failed to get dictionary keys: {error_msg}")
+                print(f"[DEBUG] dict_value type: {dict_value.GetTypeName()}")
+                print(f"[DEBUG] dict_ptr: {hex(dict_ptr)}")
             return result_dict
 
         num_keys = keys_result.GetNumChildren()
@@ -172,6 +217,8 @@ def _parse_keychain_dict(
         for i in range(max_keys):
             key_value = keys_result.GetChildAtIndex(i)
             if not key_value.IsValid():
+                if verbose:
+                    print(f"[DEBUG] Key {i} is invalid")
                 continue
 
             # Get the key as a string
@@ -180,15 +227,23 @@ def _parse_keychain_dict(
                 # Remove quotes from the string summary
                 key_str = key_str.strip('"')
             else:
+                if verbose:
+                    print(f"[DEBUG] Key {i} has no summary")
+                continue
+
+            # Skip internal/computed keys that aren't real fields
+            if key_str in ["description", "debugDescription", "hash", "superclass"]:
+                if verbose:
+                    print(f"[DEBUG] Skipping computed key: {key_str}")
                 continue
 
             # Escape special characters in the key string
-            key_str_escaped = key_str.replace('"', '\\"')
+            key_str_escaped = key_str.replace('"', '\\"').replace("\\", "\\\\")
 
             # Get the value for this key
             expr_val = f"""
             @import Foundation;
-            NSDictionary *dict = (NSDictionary *){dict_value.GetValueAsUnsigned()};
+            NSDictionary *dict = (NSDictionary *){dict_ptr};
             (id)[dict objectForKey:@"{key_str_escaped}"];
             """
 
@@ -198,39 +253,78 @@ def _parse_keychain_dict(
                     print(f"[DEBUG] Failed to get value for key '{key_str}'")
                 continue
 
+            if val_result.GetError().Fail():
+                if verbose:
+                    print(f"[DEBUG] Error getting value for key '{key_str}': {val_result.GetError().GetCString()}")
+                continue
+
             # Determine the type and extract accordingly
             type_name = val_result.GetTypeName()
 
-            if "NSData" in type_name or "NSCFData" in type_name:
+            if verbose:
+                print(f"[DEBUG] Processing key '{key_str}' with type '{type_name}'")
+
+            if (
+                "NSData" in type_name
+                or "NSCFData" in type_name
+                or "NSConcreteData" in type_name
+                or "_NSInlineData" in type_name
+            ):
                 # Extract raw bytes
                 data_bytes = _extract_nsdata_bytes(target, val_result, verbose)
                 if data_bytes is not None:
                     result_dict[key_str] = data_bytes
-                elif verbose:
-                    print(f"[DEBUG] Failed to extract NSData for key '{key_str}', skipping")
-            elif "NSString" in type_name or "NSCFString" in type_name:
+                    if verbose:
+                        print(f"[DEBUG] Successfully extracted NSData for key '{key_str}' ({len(data_bytes)} bytes)")
+                else:
+                    if verbose:
+                        print(f"[DEBUG] Failed to extract NSData for key '{key_str}', skipping")
+            elif (
+                "NSString" in type_name
+                or "NSCFString" in type_name
+                or "__NSCFConstantString" in type_name
+                or "NSTaggedPointerString" in type_name
+            ):
                 # Extract string value
                 string_val = val_result.GetSummary()
                 if string_val:
                     # Remove quotes
                     string_val = string_val.strip('"')
                     result_dict[key_str] = string_val
+                    if verbose:
+                        print(f"[DEBUG] Extracted string for key '{key_str}': {string_val[:50]}")
                 else:
                     result_dict[key_str] = ""
-            elif "NSNumber" in type_name or "NSCFNumber" in type_name:
-                # Extract number value
+            elif (
+                "NSNumber" in type_name
+                or "NSCFNumber" in type_name
+                or "__NSCFNumber" in type_name
+                or "NSTaggedPointerNumber" in type_name
+            ):
+                # Extract number value - try as unsigned first
                 num_val = val_result.GetValueAsUnsigned()
                 result_dict[key_str] = num_val
-            elif "NSDate" in type_name or "NSCFDate" in type_name:
+                if verbose:
+                    print(f"[DEBUG] Extracted number for key '{key_str}': {num_val}")
+            elif (
+                "NSDate" in type_name
+                or "NSCFDate" in type_name
+                or "__NSDate" in type_name
+                or "__NSTaggedDate" in type_name
+            ):
                 # Extract timestamp from NSDate
                 timestamp = _extract_nsdate_timestamp(target, val_result, verbose)
                 if timestamp is not None:
                     result_dict[key_str] = timestamp
-                elif verbose:
-                    print(f"[DEBUG] Failed to extract NSDate for key '{key_str}', skipping")
-            elif verbose:
+                    if verbose:
+                        print(f"[DEBUG] Extracted timestamp for key '{key_str}': {timestamp}")
+                else:
+                    if verbose:
+                        print(f"[DEBUG] Failed to extract NSDate for key '{key_str}', skipping")
+            else:
                 # For unknown types, log and skip
-                print(f"[DEBUG] Skipping unknown type for key '{key_str}': {type_name}")
+                if verbose:
+                    print(f"[DEBUG] Skipping unknown type for key '{key_str}': {type_name}")
 
     except Exception as e:
         if verbose:

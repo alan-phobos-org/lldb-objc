@@ -147,7 +147,7 @@ def main():
     print("Testing oentitlements command")
     print("=" * 60)
 
-    passed, total = run_shared_test_suite(
+    passed, total, elapsed, results = run_shared_test_suite(
         "oentitlements tests",
         get_test_specs(),
         scripts=["scripts"],

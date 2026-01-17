@@ -663,7 +663,7 @@ def main():
         "Expression evaluation": (14, 21),
     }
 
-    passed, total = run_shared_test_suite(
+    passed, total, elapsed, results = run_shared_test_suite(
         "OCALL COMMAND TEST SUITE",
         get_test_specs(),
         scripts=["scripts/objc_call.py"],

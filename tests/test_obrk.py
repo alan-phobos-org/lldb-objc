@@ -556,7 +556,7 @@ def main():
         "Superclass detection": (16, 17),
     }
 
-    passed, total = run_shared_test_suite(
+    passed, total, elapsed, results = run_shared_test_suite(
         "OBRK COMMAND TEST SUITE",
         get_test_specs(),
         scripts=["scripts/objc_breakpoint.py"],

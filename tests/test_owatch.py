@@ -379,7 +379,7 @@ def main():
         "Advanced features": (13, 17),
     }
 
-    passed, total = run_shared_test_suite(
+    passed, total, elapsed, results = run_shared_test_suite(
         "OWATCH COMMAND TEST SUITE",
         get_test_specs(),
         scripts=["scripts/objc_watch.py"],

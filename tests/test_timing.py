@@ -158,7 +158,7 @@ def main():
         "Performance target": (5, 6),
     }
 
-    passed, total = run_shared_test_suite(
+    passed, total, elapsed, results = run_shared_test_suite(
         "PERFORMANCE TIMING TEST SUITE",
         get_test_specs(),
         scripts=["scripts/objc_cls.py"],

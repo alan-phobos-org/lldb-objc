@@ -153,7 +153,7 @@ def breakpoint_on_objc_method(
     # Use HandleCommand to run "breakpoint set -a <addr>" which is exactly
     # what the user would type with "b <addr>". This ensures we use the same
     # code path as the CLI command.
-    cmd = f"breakpoint set -a 0x{load_addr:x} -N '{method_name}'"
+    cmd = f"breakpoint set -a 0x{load_addr:x}"
 
     if verbose:
         print(f"[DEBUG] Running command: {cmd}")

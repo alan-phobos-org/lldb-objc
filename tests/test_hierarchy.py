@@ -288,7 +288,7 @@ def main():
     # in individual tests. First run takes ~10-30s to enumerate all classes.
     warmup = ["ocls NS*"]
 
-    passed, total = run_shared_test_suite(
+    passed, total, elapsed, results = run_shared_test_suite(
         "OCLS HIERARCHY TEST SUITE",
         get_test_specs(),
         scripts=["scripts/objc_cls.py"],

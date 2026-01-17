@@ -224,7 +224,7 @@ def main():
     """Run all odump tests."""
     test_specs = get_test_specs()
 
-    passed, total = run_shared_test_suite(
+    passed, total, elapsed, results = run_shared_test_suite(
         "odump tests",
         test_specs,
         scripts=["scripts"],  # Load the whole package

@@ -615,7 +615,7 @@ def main():
         "Category source display": (22, 23),
     }
 
-    passed, total = run_shared_test_suite(
+    passed, total, elapsed, results = run_shared_test_suite(
         "OSEL COMMAND TEST SUITE",
         get_test_specs(),
         scripts=["scripts/objc_sel.py"],

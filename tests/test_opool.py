@@ -156,7 +156,7 @@ def main():
         "Error handling": (2, 4),
     }
 
-    passed, total = run_shared_test_suite(
+    passed, total, elapsed, results = run_shared_test_suite(
         "OPOOL COMMAND TEST SUITE",
         get_test_specs(),
         scripts=["scripts/objc_pool.py"],

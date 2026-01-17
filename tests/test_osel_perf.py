@@ -261,7 +261,7 @@ def main():
         "Verbose/metrics": (8, 10),
     }
 
-    passed, total = run_shared_test_suite(
+    passed, total, elapsed, results = run_shared_test_suite(
         "OSEL PERFORMANCE OPTIMIZATION TEST SUITE",
         get_test_specs(),
         scripts=["scripts/objc_sel.py"],

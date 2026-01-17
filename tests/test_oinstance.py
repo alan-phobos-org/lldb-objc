@@ -193,7 +193,7 @@ def main():
         "Variable inspection": (6, 7),
     }
 
-    passed, total = run_shared_test_suite(
+    passed, total, elapsed, results = run_shared_test_suite(
         "OINSTANCE COMMAND TEST SUITE",
         get_test_specs(),
         scripts=[
