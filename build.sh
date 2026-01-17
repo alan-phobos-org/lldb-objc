@@ -56,9 +56,9 @@ Usage: ./build.sh {command}
 Commands:
   version          Show current version (from git)
   lint             Run linters (ruff check + format)
-  unit-test        Run unit tests (depends on lint)
-  integration-test Run integration tests (depends on unit-test)
-  check            Full pre-commit check (runs integration-test)
+  test-unit        Run unit tests (depends on lint)
+  test-integration Run integration tests (depends on test-unit)
+  check            Full pre-commit check (runs test-integration)
   dist             Create release zip package
   deploy-local     Build dist and install locally
   prepare-release  Run all release checks and show changes
@@ -78,7 +78,7 @@ cmd_lint() {
     run_ruff format "$ROOT_DIR/scripts/" "$ROOT_DIR/tests/"
 }
 
-cmd_unit_test() {
+cmd_test_unit() {
     echo "Running unit tests (with linting)..."
     cmd_lint
     echo ""
@@ -86,9 +86,9 @@ cmd_unit_test() {
     run_pytest "$ROOT_DIR/tests/unit/" -v
 }
 
-cmd_integration_test() {
+cmd_test_integration() {
     echo "Running integration tests (with unit tests and linting)..."
-    cmd_unit_test
+    cmd_test_unit
 
     # Only run integration tests if LLDB is available (skip in CI)
     if command -v lldb >/dev/null 2>&1; then
@@ -103,7 +103,7 @@ cmd_integration_test() {
 }
 
 cmd_check() {
-    cmd_integration_test
+    cmd_test_integration
 }
 
 cmd_dist() {
@@ -357,12 +357,12 @@ case "${1:-help}" in
         cmd_lint
         ;;
 
-    unit-test)
-        cmd_unit_test
+    test-unit)
+        cmd_test_unit
         ;;
 
-    integration-test)
-        cmd_integration_test
+    test-integration)
+        cmd_test_integration
         ;;
 
     check)

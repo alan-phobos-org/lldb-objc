@@ -127,7 +127,7 @@ def get_test_specs():
         (
             "Dump NSData from string",
             [
-                "expr NSData *$testData = [@\"Hello, World!\" dataUsingEncoding:4]",
+                'expr NSData *$testData = [@"Hello, World!" dataUsingEncoding:4]',
                 f"odump $testData {TEMP_DIR}/odump_test1.bin",
             ],
             validate_nsdata_dump(),
@@ -156,7 +156,7 @@ def get_test_specs():
         (
             "Dump NSData from ObjC expression",
             [
-                "expr NSData *$exprData = [@\"test data\" dataUsingEncoding:4]",
+                'expr NSData *$exprData = [@"test data" dataUsingEncoding:4]',
                 f"odump $exprData {TEMP_DIR}/odump_test4.bin",
             ],
             validate_nsdata_dump(),
@@ -205,9 +205,9 @@ def get_test_specs():
         (
             "File overwrite behavior",
             [
-                "expr NSData *$overwriteData = [@\"First\" dataUsingEncoding:4]",
+                'expr NSData *$overwriteData = [@"First" dataUsingEncoding:4]',
                 f"odump $overwriteData {TEMP_DIR}/odump_overwrite.bin",
-                "expr $overwriteData = [@\"Second\" dataUsingEncoding:4]",
+                'expr $overwriteData = [@"Second" dataUsingEncoding:4]',
                 f"odump $overwriteData {TEMP_DIR}/odump_overwrite.bin",
             ],
             validate_nsdata_dump(),

@@ -41,9 +41,7 @@ KEYCHAIN_CLASSES = {
 }
 
 
-def _extract_nsdata_bytes(
-    target: lldb.SBTarget, nsdata_value: lldb.SBValue, verbose: bool = False
-) -> Optional[bytes]:
+def _extract_nsdata_bytes(target: lldb.SBTarget, nsdata_value: lldb.SBValue, verbose: bool = False) -> Optional[bytes]:
     """
     Extract raw bytes from an NSData object.
 
@@ -108,7 +106,7 @@ def _parse_keychain_dict(
     """
     if not dict_value.IsValid():
         if verbose:
-            print(f"[DEBUG] dict_value is invalid")
+            print("[DEBUG] dict_value is invalid")
         return None
 
     result_dict = {"class": class_value}

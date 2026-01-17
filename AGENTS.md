@@ -24,7 +24,7 @@ Commands that feel like native debugger features, not bolted-on scripts. Output 
 
 ## Development Environment
 
-**CRITICAL**: All development work MUST be done inside the `.venv` virtual environment.
+**CRITICAL**: All development AND testing MUST be done inside the `.venv` virtual environment. If you see pexpect errors you aren't in the `.venv`!
 
 ```bash
 source .venv/bin/activate  # Always activate first
@@ -134,15 +134,7 @@ For detailed implementation patterns (LLDB expression evaluation, data extractio
 
 ## Testing [READ IF: implementing features, fixing bugs]
 
-### Master Test Runner (Recommended)
-
-Run all test suites with a single shared LLDB session for maximum performance:
-
-```bash
-.venv/bin/python3 tests/run_all_tests.py
-```
-
-This runs all 17 test suites (~200+ tests) sharing one LLDB session, avoiding the 4-6s startup overhead per suite. Timing information is logged to `tests/.test_timings.log` (gitignored) in JSON format for performance analysis.
+Use `./build.sh test-unit` to verify changes are robust.
 
 ### Test Commands
 

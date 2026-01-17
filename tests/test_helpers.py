@@ -550,7 +550,9 @@ class SharedLLDBSession:
 # =============================================================================
 
 
-def run_shared_test_suite(name, test_specs, scripts=None, show_category_summary=None, warmup_commands=None, session=None, suite_prefix=""):
+def run_shared_test_suite(
+    name, test_specs, scripts=None, show_category_summary=None, warmup_commands=None, session=None, suite_prefix=""
+):
     """
     Run a list of tests using a shared LLDB session with pytest-style output.
 
@@ -841,5 +843,362 @@ class Validators:
                     return True, msg
                 messages.append(msg)
             return False, "All checks failed:\n" + "\n".join(f"  - {m}" for m in messages)
+
+        return validator
+
+    # =========================================================================
+    # Universal Validators (Cross-Cutting Patterns)
+    # =========================================================================
+
+    @staticmethod
+    def method_resolved(method_type="instance", class_name=None):
+        """
+        Validates method resolution succeeded (for obrk, osel, ocall, owatch).
+
+        Args:
+            method_type: "instance" or "class"
+            class_name: Optional class name to verify in output
+        """
+
+        def validator(output):
+            # Check for method type indicator
+            type_indicators = {
+                "instance": ["Instance method", "-[", "instance"],
+                "class": ["Class method", "+[", "class"],
+            }
+
+            indicators = type_indicators.get(method_type, [])
+            has_type_indicator = any(ind.lower() in output.lower() for ind in indicators)
+
+            # Check for address/IMP
+            has_address = "IMP:" in output or "0x" in output
+
+            if has_type_indicator and has_address:
+                msg = f"{method_type.capitalize()} method resolved"
+                if class_name and class_name in output:
+                    msg += f" for {class_name}"
+                return True, msg
+
+            return False, f"Method resolution failed for {method_type} method"
+
+        return validator
+
+    @staticmethod
+    def contains_hex_address(prefix="0x", min_length=8):
+        """
+        Validates presence of hex address (breakpoints, selectors, IMPs).
+
+        Args:
+            prefix: Prefix before hex digits (e.g., "0x", "IMP: 0x")
+            min_length: Minimum number of hex digits
+        """
+
+        def validator(output):
+            pattern = rf"{re.escape(prefix)}[0-9a-fA-F]{{{min_length},}}"
+            match = re.search(pattern, output)
+            if match:
+                return True, f"Found hex address: {match.group(0)}"
+            return False, f"No hex address found (pattern: {pattern})"
+
+        return validator
+
+    @staticmethod
+    def flag_accepted(flag_name):
+        """
+        Validates that a flag was accepted without error.
+
+        Args:
+            flag_name: Name of the flag (e.g., "--verbose", "--detailed")
+        """
+
+        def validator(output):
+            error_indicators = ["error:", "unknown", "invalid", "usage:", "unrecognized"]
+            has_error = any(e in output.lower() for e in error_indicators)
+
+            if not has_error:
+                return True, f"Flag {flag_name} accepted"
+            return False, f"Flag {flag_name} rejected or caused error"
+
+        return validator
+
+    @staticmethod
+    def private_class_optional(class_name):
+        """
+        Validates private class presence, allowing SKIPPED if unavailable.
+
+        Private framework classes may not be available on all macOS versions.
+
+        Args:
+            class_name: Name of the private class to check
+        """
+
+        def validator(output):
+            if class_name in output:
+                return True, f"Found private class {class_name}"
+
+            # Private class not found is acceptable
+            if "No" in output or "not found" in output.lower() or "0" in output:
+                return True, f"SKIPPED: {class_name} not available (expected on some systems)"
+
+            return False, f"Unexpected output when checking for private class {class_name}"
+
+        return validator
+
+    @staticmethod
+    def sorted_list_section(section_header, item_pattern=None):
+        """
+        Validates that a list section exists and is sorted.
+
+        Args:
+            section_header: Header marking the section (e.g., "Instance methods")
+            item_pattern: Optional regex pattern to extract items for sorting check
+        """
+
+        def validator(output):
+            if section_header not in output:
+                return False, f"Section '{section_header}' not found"
+
+            # Extract section content (until next empty line or end)
+            try:
+                section_start = output.index(section_header)
+                section_end = output.find("\n\n", section_start)
+                if section_end == -1:
+                    section_end = len(output)
+                section = output[section_start:section_end]
+            except ValueError:
+                return False, f"Could not extract section '{section_header}'"
+
+            # If pattern provided, check sorting
+            if item_pattern:
+                items = re.findall(item_pattern, section)
+                if not items:
+                    return True, f"Section '{section_header}' present (no items to sort)"
+
+                sorted_items = sorted(items, key=str.lower)
+                if items == sorted_items:
+                    return True, f"Section '{section_header}' is sorted ({len(items)} items)"
+                return False, f"Section '{section_header}' not properly sorted"
+
+            return True, f"Section '{section_header}' present"
+
+        return validator
+
+    @staticmethod
+    def multiple_items_created(item_pattern, min_count=2, item_name="items"):
+        """
+        Validates that multiple items were created (breakpoints, watches, etc.).
+
+        Args:
+            item_pattern: Regex pattern to match items (should have capture group)
+            min_count: Minimum number of items expected
+            item_name: Human-readable name for items (for error messages)
+        """
+
+        def validator(output):
+            items = re.findall(item_pattern, output)
+            count = len(items)
+
+            if count >= min_count:
+                return True, f"Created {count} {item_name} (>= {min_count})"
+            return False, f"Only created {count} {item_name}, expected >= {min_count}"
+
+        return validator
+
+    @staticmethod
+    def count_in_range(pattern, min_count=None, max_count=None, item_name="items"):
+        """
+        Validates that item count extracted by pattern is within range.
+
+        Args:
+            pattern: Regex pattern with capture group for count
+            min_count: Minimum count (inclusive)
+            max_count: Maximum count (inclusive)
+            item_name: Human-readable name for items
+        """
+
+        def validator(output):
+            match = re.search(pattern, output)
+            if not match:
+                return False, f"Could not find {item_name} count in output"
+
+            count_str = match.group(1).replace(",", "")
+            count = int(count_str)
+
+            if min_count is not None and count < min_count:
+                return False, f"Found {count} {item_name}, expected >= {min_count}"
+            if max_count is not None and count > max_count:
+                return False, f"Found {count} {item_name}, expected <= {max_count}"
+
+            return True, f"Found {count:,} {item_name}"
+
+        return validator
+
+
+# =============================================================================
+# ocls-specific Validator Utilities
+# =============================================================================
+
+
+class OclsValidators:
+    """Specialized validators for ocls command tests."""
+
+    @staticmethod
+    def extract_match_count(output):
+        """Extract match count from ocls output. Returns None if not found."""
+        # Try different formats: "Found N", "N total", "N matched"
+        match = re.search(r"(?:Found\s+)?(\d+(?:,\d{3})*)\s+(?:class|total|matched)", output)
+        if match:
+            return int(match.group(1).replace(",", ""))
+        # Try simple "N total" format
+        match = re.search(r"([\d,]+)\s*total", output)
+        if match:
+            return int(match.group(1).replace(",", ""))
+        return None
+
+    @staticmethod
+    def class_count(min_count=None, max_count=None, exact_count=None):
+        """Validator that checks class count in output."""
+
+        def validator(output):
+            count = OclsValidators.extract_match_count(output)
+            if count is None:
+                return False, "No class count found in output"
+
+            if exact_count is not None and count != exact_count:
+                return False, f"Expected {exact_count} classes, got {count}"
+            if min_count is not None and count < min_count:
+                return False, f"Expected >={min_count} classes, got {count}"
+            if max_count is not None and count > max_count:
+                return False, f"Expected <={max_count} classes, got {count}"
+
+            return True, f"Found {count:,} classes"
+
+        return validator
+
+    @staticmethod
+    def class_found(*class_names):
+        """Validator that checks if specific class names are present."""
+
+        def validator(output):
+            missing = [c for c in class_names if c not in output]
+            if not missing:
+                return True, f"Found {', '.join(class_names)}"
+            return False, f"Missing classes: {', '.join(missing)}"
+
+        return validator
+
+    @staticmethod
+    def no_classes_found():
+        """Validator that checks for empty results."""
+
+        def validator(output):
+            if "No classes found" in output or OclsValidators.extract_match_count(output) == 0:
+                return True, "Correctly reports no matches"
+            return False, "Expected no matches but found results"
+
+        return validator
+
+    @staticmethod
+    def has_hierarchy():
+        """Validator that checks for hierarchy arrows in output."""
+
+        def validator(output):
+            if "→" in output:
+                return True, "Hierarchy display present"
+            return False, "No hierarchy arrows found"
+
+        return validator
+
+    @staticmethod
+    def cached_result():
+        """Validator that checks if result came from cache."""
+
+        def validator(output):
+            if "cached" in output.lower():
+                return True, "Result from cache"
+            return False, "No cache indicator found"
+
+        return validator
+
+    @staticmethod
+    def not_cached():
+        """Validator that checks result is NOT from cache (for --reload tests)."""
+
+        def validator(output):
+            if "cached" in output.lower():
+                return False, "Result unexpectedly from cache (--reload should bypass)"
+            return True, "Cache bypassed as expected"
+
+        return validator
+
+    @staticmethod
+    def dylib_info_present():
+        """Validator that checks for dylib/framework path information."""
+
+        def validator(output):
+            dylib_patterns = ["/System/Library/", ".framework", ".dylib", "Foundation", "CoreFoundation", "libobjc"]
+            if any(p in output for p in dylib_patterns):
+                return True, "Dylib information present"
+            return False, "No dylib path information found"
+
+        return validator
+
+    @staticmethod
+    def verbose_metrics():
+        """Validator that checks for verbose performance metrics."""
+
+        def validator(output):
+            metrics = ["Total time", "Timing breakdown", "Expressions", "Memory", "Batch size"]
+            found = [m for m in metrics if m in output]
+            if found:
+                return True, f"Verbose metrics present: {', '.join(found)}"
+            return False, "No verbose performance metrics found"
+
+        return validator
+
+    @staticmethod
+    def expression_count(max_count):
+        """Validator that checks expression count is below threshold (for fast path tests)."""
+
+        def validator(output):
+            match = re.search(r"Expressions:\s*(\d+)", output)
+            if match:
+                count = int(match.group(1))
+                if count <= max_count:
+                    return True, f"Expression count {count} <= {max_count} (fast path confirmed)"
+                return False, f"Expression count {count} > {max_count} (fast path may not be working)"
+            return False, "No expression count found (need --verbose flag)"
+
+        return validator
+
+    @staticmethod
+    def hierarchy_display_mode(expected_mode):
+        """
+        Validator for hierarchy display mode based on match count.
+        Modes: 'single' (1 match, detailed), 'compact' (2-20, one-liners), 'list' (21+, no hierarchy)
+        """
+
+        def validator(output):
+            count = OclsValidators.extract_match_count(output)
+            if count is None:
+                # No explicit count, infer from content
+                if "→" in output:
+                    if expected_mode == "list":
+                        return False, "Expected list mode (no hierarchy) but found arrows"
+                    return True, f"Hierarchy present ({expected_mode} mode)"
+                else:
+                    if expected_mode in ["single", "compact"]:
+                        return False, f"Expected {expected_mode} mode with hierarchy but no arrows found"
+                    return True, "List mode (no per-class hierarchy)"
+
+            # Validate based on count
+            if count == 1 and expected_mode != "single":
+                return False, f"Got 1 match but expected {expected_mode} mode"
+            if 2 <= count <= 20 and expected_mode != "compact":
+                return False, f"Got {count} matches but expected {expected_mode} mode"
+            if count > 20 and expected_mode != "list":
+                return False, f"Got {count} matches but expected {expected_mode} mode"
+
+            return True, f"Correct display mode for {count} matches"
 
         return validator

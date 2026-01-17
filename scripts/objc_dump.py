@@ -112,7 +112,6 @@ def _evaluate_expression(frame: lldb.SBFrame, expr: str) -> Tuple[Optional[int],
     addr = result.GetValueAsUnsigned(0)
     if addr == 0:
         # Check if it's actually nil or just evaluated to 0
-        type_name = result.GetTypeName()
         if "nil" in str(result.GetValue()) or addr == 0:
             return None, "Expression evaluated to nil/NULL"
 

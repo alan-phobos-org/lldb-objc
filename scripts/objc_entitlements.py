@@ -31,9 +31,7 @@ except ImportError:
 _initialized = False
 
 
-def _extract_entitlements_csops(
-    frame: lldb.SBFrame, verbose: bool = False
-) -> Tuple[Optional[bytes], Optional[str]]:
+def _extract_entitlements_csops(frame: lldb.SBFrame, verbose: bool = False) -> Tuple[Optional[bytes], Optional[str]]:
     """
     Extract entitlements using csops system call (preferred method).
 
@@ -105,7 +103,7 @@ def _extract_entitlements_csops(
         target.EvaluateExpression(f"free((void *)0x{buffer_addr:x})")
         return None, f"Failed to read length: {error_ref.GetCString()}"
 
-    length = int.from_bytes(length_bytes, byteorder='big')
+    length = int.from_bytes(length_bytes, byteorder="big")
 
     if verbose:
         print(f"[DEBUG] Entitlements blob length: {length}")
@@ -129,9 +127,7 @@ def _extract_entitlements_csops(
     return entitlements_data, None
 
 
-def _extract_entitlements_linkedit(
-    frame: lldb.SBFrame, verbose: bool = False
-) -> Tuple[Optional[bytes], Optional[str]]:
+def _extract_entitlements_linkedit(frame: lldb.SBFrame, verbose: bool = False) -> Tuple[Optional[bytes], Optional[str]]:
     """
     Extract entitlements by parsing __LINKEDIT segment (fallback method).
 
@@ -174,7 +170,7 @@ def _extract_entitlements_linkedit(
         return None, f"Failed to read __LINKEDIT: {error_ref.GetCString()}"
 
     # Search for the embedded signature magic (0xfade0cc0)
-    magic = bytes([0xfa, 0xde, 0x0c, 0xc0])
+    magic = bytes([0xFA, 0xDE, 0x0C, 0xC0])
     offset = linkedit_data.find(magic)
 
     if offset == -1:
@@ -185,8 +181,8 @@ def _extract_entitlements_linkedit(
 
     # Parse the SuperBlob header
     # SuperBlob: magic (4) + length (4) + count (4) + BlobIndex entries
-    superblob_length = int.from_bytes(linkedit_data[offset + 4:offset + 8], byteorder='big')
-    blob_count = int.from_bytes(linkedit_data[offset + 8:offset + 12], byteorder='big')
+    superblob_length = int.from_bytes(linkedit_data[offset + 4 : offset + 8], byteorder="big")
+    blob_count = int.from_bytes(linkedit_data[offset + 8 : offset + 12], byteorder="big")
 
     if verbose:
         print(f"[DEBUG] SuperBlob length: {superblob_length}, blob count: {blob_count}")
@@ -194,25 +190,23 @@ def _extract_entitlements_linkedit(
     # Search for the entitlements blob (type 5 = CSSLOT_ENTITLEMENTS)
     index_offset = offset + 12
     for i in range(blob_count):
-        blob_type = int.from_bytes(linkedit_data[index_offset:index_offset + 4], byteorder='big')
-        blob_offset = int.from_bytes(linkedit_data[index_offset + 4:index_offset + 8], byteorder='big')
+        blob_type = int.from_bytes(linkedit_data[index_offset : index_offset + 4], byteorder="big")
+        blob_offset = int.from_bytes(linkedit_data[index_offset + 4 : index_offset + 8], byteorder="big")
 
         if blob_type == 5:  # CSSLOT_ENTITLEMENTS
             # Found entitlements blob
             entitlements_offset = offset + blob_offset
 
             # Read the blob header (magic + length)
-            blob_magic = linkedit_data[entitlements_offset:entitlements_offset + 4]
             blob_length = int.from_bytes(
-                linkedit_data[entitlements_offset + 4:entitlements_offset + 8],
-                byteorder='big'
+                linkedit_data[entitlements_offset + 4 : entitlements_offset + 8], byteorder="big"
             )
 
             if verbose:
                 print(f"[DEBUG] Entitlements blob at offset: 0x{entitlements_offset:x}, length: {blob_length}")
 
             # Extract the XML data (skip the 8-byte header)
-            entitlements_data = linkedit_data[entitlements_offset + 8:entitlements_offset + blob_length]
+            entitlements_data = linkedit_data[entitlements_offset + 8 : entitlements_offset + blob_length]
 
             return entitlements_data, None
 
@@ -221,9 +215,7 @@ def _extract_entitlements_linkedit(
     return None, "Entitlements blob not found in code signature"
 
 
-def extract_entitlements(
-    frame: lldb.SBFrame, verbose: bool = False
-) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+def extract_entitlements(frame: lldb.SBFrame, verbose: bool = False) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """
     Extract and parse entitlements from the current process.
 
@@ -293,7 +285,7 @@ def show_entitlements(
     if show_xml:
         # Show raw XML
         xml_data = plistlib.dumps(entitlements, fmt=plistlib.FMT_XML)
-        print(xml_data.decode('utf-8'))
+        print(xml_data.decode("utf-8"))
     else:
         # Show formatted JSON (more readable than plist)
         print("Process Entitlements:")
@@ -318,7 +310,5 @@ def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any])
         return
     _initialized = True
     module_path = f"{__name__}.show_entitlements"
-    debugger.HandleCommand(
-        f'command script add -h "Show process entitlements" -f {module_path} oentitlements'
-    )
+    debugger.HandleCommand(f'command script add -h "Show process entitlements" -f {module_path} oentitlements')
     print(f"[lldb-objc v{__version__}] 'oentitlements' installed - Show process entitlements")

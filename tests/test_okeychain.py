@@ -145,7 +145,7 @@ def validate_extract_command():
                 if os.path.exists(plist_path):
                     try:
                         os.remove(plist_path)
-                    except:
+                    except OSError:
                         pass
 
         return True, "Acceptable extract output"

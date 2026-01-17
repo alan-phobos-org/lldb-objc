@@ -21,7 +21,7 @@ TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(TESTS_DIR)
 sys.path.insert(0, TESTS_DIR)
 
-from test_helpers import (
+from test_helpers import (  # noqa: E402
     SharedLLDBSession,
     run_shared_test_suite,
     check_hello_world_binary,
@@ -90,7 +90,7 @@ def log_suite_timing(log_file, suite_data):
         f.write(f"Suite: {suite_data['suite']}\n")
         f.write("-" * 80 + "\n")
         f.write(f"  Status:   {suite_data['passed']}/{suite_data['total']} passed")
-        if suite_data['failed'] > 0:
+        if suite_data["failed"] > 0:
             f.write(f", {suite_data['failed']} FAILED")
         f.write("\n")
         f.write(f"  Time:     {suite_data['elapsed']:.3f}s\n")
@@ -98,10 +98,10 @@ def log_suite_timing(log_file, suite_data):
         f.write("\n")
         f.write("  Test Cases:\n")
 
-        for test in suite_data['tests']:
-            status = "✓" if test['passed'] else "✗"
+        for test in suite_data["tests"]:
+            status = "✓" if test["passed"] else "✗"
             # Clean up test name (remove suite prefix)
-            name = test['name'].split("::", 1)[1] if "::" in test['name'] else test['name']
+            name = test["name"].split("::", 1)[1] if "::" in test["name"] else test["name"]
             f.write(f"    {status} {name:<60} {test['time']:>8.3f}s\n")
 
         f.write("\n")
@@ -120,8 +120,8 @@ def log_summary(log_file, summary_data):
         f.write("\n")
         f.write(f"  Session startup:  {summary_data['session_startup']:.3f}s\n")
         f.write(f"  Total time:       {summary_data['total_elapsed']:.3f}s\n")
-        if summary_data['total_tests'] > 0:
-            avg = summary_data['total_elapsed'] / summary_data['total_tests']
+        if summary_data["total_tests"] > 0:
+            avg = summary_data["total_elapsed"] / summary_data["total_tests"]
             f.write(f"  Avg per test:     {avg:.3f}s\n")
         f.write("\n")
         f.write("=" * 80 + "\n")
@@ -189,14 +189,12 @@ def main():
                     test_specs = module.get_test_specs()
 
                     # Run tests with shared session
-                    suite_start = time.time()
                     passed, total, elapsed, results = run_shared_test_suite(
                         name=f"{suite_name.upper()} TEST SUITE",
                         test_specs=test_specs,
                         session=session,  # Use shared session
                         suite_prefix=f"{test_file}::",
                     )
-                    suite_end = time.time()
 
                     # Track results
                     failed = total - passed
@@ -257,7 +255,7 @@ def main():
     print(f"Total failed:       {total_tests_failed}")
     print(f"Session startup:    {session_startup_time:.2f}s")
     print(f"Total time:         {total_elapsed:.2f}s")
-    print(f"Avg per test:       {total_elapsed/total_tests_run:.3f}s" if total_tests_run > 0 else "")
+    print(f"Avg per test:       {total_elapsed / total_tests_run:.3f}s" if total_tests_run > 0 else "")
     print()
 
     # Log overall summary

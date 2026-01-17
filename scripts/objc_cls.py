@@ -1435,9 +1435,9 @@ def _get_classes_for_image(
     # Escape any quotes in the path
     escaped_path = image_path.replace('"', '\\"')
     expr = (
-        f'(void *)(^{{ static unsigned int s_cnt = 0; static const char * const *s_nms = 0; '
+        f"(void *)(^{{ static unsigned int s_cnt = 0; static const char * const *s_nms = 0; "
         f's_nms = (const char * const *)objc_copyClassNamesForImage("{escaped_path}", &s_cnt); '
-        f'return (void *)s_nms; }}())'
+        f"return (void *)s_nms; }}())"
     )
     result = evaluate_expression(frame, expr, timeout_seconds=10.0)
     timing["expression_count"] += 1
@@ -1451,7 +1451,7 @@ def _get_classes_for_image(
 
     # Step 2: Get the count
     count_expr = (
-        f'(unsigned int)(^{{ unsigned int c = 0; '
+        f"(unsigned int)(^{{ unsigned int c = 0; "
         f'(void)objc_copyClassNamesForImage("{escaped_path}", &c); return c; }}())'
     )
     count_result = evaluate_expression(frame, count_expr, timeout_seconds=10.0)
