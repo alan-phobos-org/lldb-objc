@@ -10,14 +10,10 @@ A comprehensive set of LLDB commands for Objective-C runtime introspection, maki
 
 Standalone sandbox scanner binary available at `tools/osbx-standalone/`.
 
-## Performance Notes
+## TODO
 
-Batch size **35** is optimal. Key optimizations:
-- Bulk `ReadMemory()` instead of per-item expressions
-- Objective-C blocks for compound expressions
-- Per-process caching (<0.01s on subsequent queries)
+### v1.4
 
-| Scenario | Time |
-|----------|------|
-| First run (~10K classes) | ~12s |
-| Cached run | <0.01s |
+* Remove experimental commands
+* Re-optimise ocls
+* Re-implement shared lldb test session

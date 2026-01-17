@@ -55,44 +55,26 @@ Usage: ./build.sh {command}
 
 Commands:
   version          Show current version (from git)
-  test             Run unit tests (pytest)
-  test-int         Run integration tests (full suite)
-  test-quick       Run quick integration tests
-  test-all         Run unit + integration tests
-  lint             Run linters (ruff or flake8)
-  check            Full pre-commit check (lint + test + test-quick)
+  lint             Run linters (ruff check + format)
+  unit-test        Run unit tests (depends on lint)
+  integration-test Run integration tests (depends on unit-test)
+  check            Full pre-commit check (runs integration-test)
   dist             Create release zip package
   deploy-local     Build dist and install locally
   prepare-release  Run all release checks and show changes
   release X.Y.Z    Create release commit and tag
   clean            Remove build artifacts
   status           Show project status (working copy, remote, CI, releases)
+
+Aliases (backward compatibility):
+  test             Alias for unit-test
+  test-int         Alias for integration-test
+  test-all         Alias for integration-test
 EOF
 }
 
 cmd_version() {
     echo "$VERSION"
-}
-
-cmd_test() {
-    echo "Running unit tests..."
-    run_pytest "$ROOT_DIR/tests/unit/" -v
-}
-
-cmd_test_int() {
-    echo "Running integration tests..."
-    run_python "$ROOT_DIR/tests/run_all_tests.py"
-}
-
-cmd_test_quick() {
-    echo "Running quick integration tests..."
-    run_python "$ROOT_DIR/tests/run_all_tests.py" --quick
-}
-
-cmd_test_all() {
-    echo "Running all tests..."
-    cmd_test
-    cmd_test_int
 }
 
 cmd_lint() {
@@ -101,15 +83,32 @@ cmd_lint() {
     run_ruff format "$ROOT_DIR/scripts/" "$ROOT_DIR/tests/"
 }
 
-cmd_check() {
+cmd_unit_test() {
+    echo "Running unit tests (with linting)..."
     cmd_lint
-    cmd_test
+    echo ""
+    echo "Running pytest..."
+    run_pytest "$ROOT_DIR/tests/unit/" -v
+}
+
+cmd_integration_test() {
+    echo "Running integration tests (with unit tests and linting)..."
+    cmd_unit_test
+
     # Only run integration tests if LLDB is available (skip in CI)
     if command -v lldb >/dev/null 2>&1; then
-        cmd_test_quick
+        echo ""
+        echo "Running LLDB integration tests..."
+        run_python "$ROOT_DIR/tests/run_all_tests.py"
     else
-        echo "Skipping integration tests (LLDB not available)"
+        echo ""
+        echo "⚠️  Skipping integration tests (LLDB not available)"
+        echo "Unit tests passed, but integration tests require LLDB"
     fi
+}
+
+cmd_check() {
+    cmd_integration_test
 }
 
 cmd_dist() {
@@ -176,17 +175,12 @@ cmd_prepare_release() {
     echo "=== Preparing release ==="
     echo ""
 
-    echo "Step 1/3: Running full integration tests..."
-    cmd_test_int
-    echo "✓ Integration tests passed"
-    echo ""
-
-    echo "Step 2/3: Creating dist package..."
+    echo "Step 1/2: Creating dist package (includes full test suite)..."
     cmd_dist
     echo "✓ Package created successfully"
     echo ""
 
-    echo "Step 3/3: Changes since last release..."
+    echo "Step 2/2: Changes since last release..."
     echo ""
     LAST_TAG=$(git -C "$ROOT_DIR" describe --tags --abbrev=0 2>/dev/null || echo "")
     if [ -n "$LAST_TAG" ]; then
@@ -364,24 +358,16 @@ case "${1:-help}" in
         cmd_version
         ;;
 
-    test)
-        cmd_test
-        ;;
-
-    test-int)
-        cmd_test_int
-        ;;
-
-    test-quick)
-        cmd_test_quick
-        ;;
-
-    test-all)
-        cmd_test_all
-        ;;
-
     lint)
         cmd_lint
+        ;;
+
+    unit-test)
+        cmd_unit_test
+        ;;
+
+    integration-test)
+        cmd_integration_test
         ;;
 
     check)
@@ -410,6 +396,15 @@ case "${1:-help}" in
 
     status)
         cmd_status
+        ;;
+
+    # Backward compatibility aliases
+    test)
+        cmd_unit_test
+        ;;
+
+    test-int|test-all)
+        cmd_integration_test
         ;;
 
     help|*)
