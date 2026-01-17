@@ -10,12 +10,14 @@ lldb-objc provides LLDB Python scripts for enhanced Objective-C debugging, inclu
 - `scripts/objc_dump.py` - The `odump` command for dumping NSData/memory to files
 - `scripts/objc_entitlements.py` - The `oentitlements` command for extracting process entitlements
 - `scripts/objc_keychain.py` - The `okeychain` command for querying keychain items
+- `scripts/objc_pool.py` - The `opool` command for scanning autorelease pools
 - `scripts/objc_utils.py` - Utility functions for method resolution
 - `scripts/objc_core.py` - Core parsing and formatting functions
 - `tests/test_obrk.py` - Comprehensive test suite for breakpoint functionality
 - `tests/test_odump.py` - Test suite for odump command
 - `tests/test_oentitlements.py` - Test suite for oentitlements command
 - `tests/test_okeychain.py` - Test suite for okeychain command
+- `tests/test_opool.py` - Test suite for opool command
 
 ## Important Patterns
 
@@ -24,6 +26,14 @@ lldb-objc provides LLDB Python scripts for enhanced Objective-C debugging, inclu
 - Check both `result.IsValid()` and `result.GetError().Fail()`
 - Complex block expressions can timeout; prefer multiple simple expressions
 - Use direct memory reads (`process.ReadMemory`) when possible
+
+### Data Extraction from ObjC Objects
+- For NSData: Call `[obj bytes]` and `[obj length]`, then use `process.ReadMemory()`
+- For NSDictionary: Use `[dict allKeys]` then iterate with `GetChildAtIndex()`
+- For NSString: Use `GetSummary()` and strip quotes
+- For NSNumber: Use `GetValueAsUnsigned()`
+- Always include fallback to `GetObjectDescription()` for robustness
+- Limit iteration counts (e.g., max 50 keys) to prevent hangs
 
 ### Breakpoint Timing
 - ObjC runtime must be fully initialized before using runtime functions

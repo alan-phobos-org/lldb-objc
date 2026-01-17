@@ -6,6 +6,7 @@ This script tests the okeychain functionality:
 - Basic keychain item listing
 - Filter by access group/account
 - Verbose mode
+- Extract to XML plist file
 - Error handling for invalid states
 
 Uses a shared LLDB session for faster test execution.
@@ -14,6 +15,8 @@ Note: These tests may not find actual keychain items in a simple test binary,
 but they verify the command runs without errors.
 """
 
+import os
+import plistlib
 import sys
 from test_helpers import run_shared_test_suite
 
@@ -85,6 +88,71 @@ def validate_verbose_keychain():
     return validator
 
 
+def validate_extract_command():
+    """Validator for extract command and plist structure."""
+
+    def validator(output):
+        # First check the command output
+        if "No keychain items found to extract" in output:
+            return True, "No items to extract (expected for test binary)"
+
+        if "error" in output.lower() and "Process must be running" not in output:
+            return False, f"Error during extraction: {output[:300]}"
+
+        if "Extracted" in output and "keychain item" in output:
+            # Extraction succeeded, now validate the plist structure
+            plist_path = "/tmp/keychain_test.plist"
+
+            try:
+                if not os.path.exists(plist_path):
+                    return False, "Plist file was not created"
+
+                with open(plist_path, "rb") as f:
+                    plist_data = plistlib.load(f)
+
+                # Verify top-level structure
+                if "count" not in plist_data:
+                    return False, "Plist missing 'count' field"
+                if "items" not in plist_data:
+                    return False, "Plist missing 'items' field"
+
+                items = plist_data["items"]
+                if not isinstance(items, list):
+                    return False, "'items' is not a list"
+
+                # Check each item has proper structure
+                for i, item in enumerate(items):
+                    if not isinstance(item, dict):
+                        return False, f"Item {i} is not a dictionary"
+
+                    # Verify 'class' field exists
+                    if "class" not in item:
+                        return False, f"Item {i} missing 'class' field"
+
+                    # Check for bytes fields - if they exist, they should be bytes objects
+                    bytes_fields = ["v_Data", "issr", "pkhh", "subj", "slnr"]
+                    for field in bytes_fields:
+                        if field in item:
+                            if not isinstance(item[field], bytes):
+                                return False, f"Item {i}: '{field}' is not bytes (type: {type(item[field])})"
+
+                return True, f"Extracted successfully with valid plist structure ({len(items)} item(s))"
+
+            except Exception as e:
+                return False, f"Failed to validate plist: {e}"
+            finally:
+                # Clean up
+                if os.path.exists(plist_path):
+                    try:
+                        os.remove(plist_path)
+                    except:
+                        pass
+
+        return True, "Acceptable extract output"
+
+    return validator
+
+
 # =============================================================================
 # Test Cases
 # =============================================================================
@@ -137,6 +205,18 @@ TEST_CASES = [
         ],
         "validators": [
             validate_keychain_list(),
+        ],
+        "shared_session": True,
+    },
+    {
+        "name": "Extract keychain to plist",
+        "description": "Extract keychain items to XML plist file with proper structure",
+        "target": "HelloWorld",
+        "commands": [
+            "okeychain extract /tmp/keychain_test.plist",
+        ],
+        "validators": [
+            validate_extract_command(),
         ],
         "shared_session": True,
     },
