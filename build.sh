@@ -54,17 +54,18 @@ LLDB Objective-C Tools - Build Script
 Usage: ./build.sh {command}
 
 Commands:
-  version          Show current version (from git)
-  lint             Run linters (ruff check + format)
-  test-unit        Run unit tests (depends on lint)
-  test-integration Run integration tests (depends on test-unit)
-  check            Full pre-commit check (runs test-integration)
-  dist             Create release zip package
-  deploy-local     Build dist and install locally
-  prepare-release  Run all release checks and show changes
-  release X.Y.Z    Create release commit and tag
-  clean            Remove build artifacts
-  status           Show project status (working copy, remote, CI, releases)
+  version               Show current version (from git)
+  lint                  Run linters (ruff check + format)
+  test-unit             Run unit tests (depends on lint)
+  test-integration      Run all integration tests (depends on test-unit)
+  test-integration CMD  Run specific integration test suite (e.g., ocls, obrk)
+  check                 Full pre-commit check (runs test-integration)
+  dist                  Create release zip package
+  deploy-local          Build dist and install locally
+  prepare-release       Run all release checks and show changes
+  release X.Y.Z         Create release commit and tag
+  clean                 Remove build artifacts
+  status                Show project status (working copy, remote, CI, releases)
 EOF
 }
 
@@ -87,18 +88,43 @@ cmd_test_unit() {
 }
 
 cmd_test_integration() {
-    echo "Running integration tests (with unit tests and linting)..."
-    cmd_test_unit
+    local command_name="${1:-}"
 
-    # Only run integration tests if LLDB is available (skip in CI)
-    if command -v lldb >/dev/null 2>&1; then
-        echo ""
-        echo "Running LLDB integration tests..."
-        run_python "$ROOT_DIR/tests/run_all_tests.py"
+    if [ -n "$command_name" ]; then
+        # Run specific integration test suite
+        echo "Running integration test for '$command_name' (with unit tests and linting)..."
+        cmd_test_unit
+
+        # Only run integration tests if LLDB is available
+        if command -v lldb >/dev/null 2>&1; then
+            local test_file="test_${command_name}.py"
+            local test_path="$ROOT_DIR/tests/$test_file"
+
+            if [ ! -f "$test_path" ]; then
+                die "Test file not found: $test_file\nAvailable tests: $(cd "$ROOT_DIR/tests" && ls test_o*.py test_hierarchy.py test_ivars_props.py test_timing.py | sed 's/test_//' | sed 's/.py//' | tr '\n' ', ' | sed 's/,$//')"
+            fi
+
+            echo ""
+            echo "Running integration test: $test_file..."
+            run_python "$test_path"
+        else
+            die "LLDB not available - integration tests require LLDB"
+        fi
     else
-        echo ""
-        echo "⚠️  Skipping integration tests (LLDB not available)"
-        echo "Unit tests passed, but integration tests require LLDB"
+        # Run all integration tests
+        echo "Running integration tests (with unit tests and linting)..."
+        cmd_test_unit
+
+        # Only run integration tests if LLDB is available (skip in CI)
+        if command -v lldb >/dev/null 2>&1; then
+            echo ""
+            echo "Running LLDB integration tests..."
+            run_python "$ROOT_DIR/tests/run_all_tests.py"
+        else
+            echo ""
+            echo "⚠️  Skipping integration tests (LLDB not available)"
+            echo "Unit tests passed, but integration tests require LLDB"
+        fi
     fi
 }
 
@@ -362,7 +388,7 @@ case "${1:-help}" in
         ;;
 
     test-integration)
-        cmd_test_integration
+        cmd_test_integration "${2:-}"
         ;;
 
     check)

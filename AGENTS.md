@@ -19,6 +19,7 @@ Commands that feel like native debugger features, not bolted-on scripts. Output 
 | [docs/PITFALLS.md](docs/PITFALLS.md) | Technical gotchas | Debugging failures |
 | [docs/TESTING.md](docs/TESTING.md) | Test guide | Writing tests |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Optimization | Performance work |
+| [docs/OCLS_OPTIMIZATION.md](docs/OCLS_OPTIMIZATION.md) | ocls speedup techniques | Optimizing class enumeration |
 | [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Adding commands, releasing | New features, releases |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes | Preparing releases |
 
@@ -39,10 +40,10 @@ The venv includes all dependencies (pytest, pexpect, etc.). If you're not in the
 
 | Command | Purpose |
 |---------|---------|
-| `./build.sh check` | **Pre-commit** (lint + test) |
-| `./build.sh test` | Unit tests only (pytest) |
-| `./build.sh test-quick` | Quick integration tests |
-| `./build.sh test-all` | Unit + integration |
+| `./build.sh check` | **Pre-commit** (lint + all tests) |
+| `./build.sh test-unit` | Unit tests only (pytest) |
+| `./build.sh test-integration` | All integration tests |
+| `./build.sh test-integration <cmd>` | **Fast re-test**: Single integration suite (e.g., `ocls`) |
 | `./build.sh lint` | Format and lint |
 
 ### Commands
@@ -103,7 +104,8 @@ build.sh              # Build, test, release
 install.py            # Installer
 tests/
   unit/               # Pure Python tests (pytest)
-  integration/        # LLDB integration tests
+  test_bootstrap*.py  # Bootstrap scripts (auto-load commands)
+  bootstrap_common.py # Shared bootstrap utilities
 examples/             # Example projects for testing
 docs/                 # Design documents and guides
 ```
@@ -140,10 +142,14 @@ Use `./build.sh test-unit` to verify changes are robust.
 
 | Command | Purpose | Speed |
 |---------|---------|-------|
-| `./build.sh test` | Unit tests (pytest) | <0.1s |
-| `./build.sh test-quick` | Quick integration | ~30s |
-| `./build.sh test-int` | Full integration | ~2-3min |
-| `./build.sh test-all` | Unit + integration | ~3min |
+| `./build.sh test-unit` | Unit tests (pytest) | <0.1s |
+| `./build.sh test-integration` | All integration tests | ~2-3min |
+| `./build.sh test-integration <cmd>` | Single integration suite | ~5-10s |
+| `./build.sh check` | Full pre-commit (unit + all integration) | ~3min |
+
+**Fast re-testing workflow**: After fixing a specific command (e.g., `ocls`), use `./build.sh test-integration ocls` to run unit tests + just that command's integration suite.
+
+Available integration test commands: `obrk`, `ocall`, `ocls`, `odump`, `oentitlements`, `oinstance`, `okeychain`, `opool`, `osbx`, `osel`, `owatch`, `hierarchy`, `ivars_props`, `timing`
 
 Individual test suites can also be run directly:
 
@@ -154,7 +160,8 @@ Individual test suites can also be run directly:
 Tests use shared LLDB sessions for performance. The HelloWorld examples in [examples/](examples/) are used as test targets.
 
 ### Test Workflow
-- **Before committing**: `pytest` + `./build.sh test-quick`
+- **Before committing**: `./build.sh check`
+- **Fast re-test after fix**: `./build.sh test-integration <command>`
 - **After refactoring**: Full integration suite
 - **After output changes**: Manually verify in actual LLDB session
 

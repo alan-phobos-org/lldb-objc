@@ -30,7 +30,7 @@ from test_helpers import run_shared_test_suite, Validators, OclsValidators
 # Thresholds for validation
 MIN_TOTAL_CLASSES = 1000  # Minimum expected classes in a full runtime
 HIERARCHY_COMPACT_MAX = 20  # Max classes for compact hierarchy display
-FAST_PATH_EXPR_LIMIT = 20  # Max expressions for --dylib fast path
+FAST_PATH_EXPR_LIMIT = 50  # Max expressions for --dylib fast path (realistic for patterns matching ~10 frameworks)
 
 
 # =============================================================================

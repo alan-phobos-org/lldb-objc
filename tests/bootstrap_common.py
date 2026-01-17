@@ -47,6 +47,9 @@ def make_commands_with_main_breakpoint(binary_path: str) -> str:
 # Load the target binary
 file {binary_path}
 
+# Load LLDB Objective-C commands
+command script import {SCRIPTS_DIR}
+
 # Set breakpoint on main
 b main
 
@@ -72,6 +75,9 @@ def make_commands_with_stop_at_entry(binary_path: str) -> str:
 # Load the target binary
 file {binary_path}
 
+# Load LLDB Objective-C commands
+command script import {SCRIPTS_DIR}
+
 # Break on autoreleasePoolPush - called in main() when ObjC runtime is ready
 # (--stop-at-entry stops before dyld loads, making dlopen unavailable)
 breakpoint set -n objc_autoreleasePoolPush --one-shot true
@@ -91,6 +97,9 @@ def make_commands_for_sandboxed_binary(binary_path: str) -> str:
     return f"""
 # Load the target binary
 file {binary_path}
+
+# Load LLDB Objective-C commands
+command script import {SCRIPTS_DIR}
 
 # Break on sandbox_init - stops right before sandbox restrictions are applied
 # (binary is non-optimised so symbols are easy to find)

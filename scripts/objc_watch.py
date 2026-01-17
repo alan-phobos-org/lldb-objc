@@ -403,7 +403,7 @@ def watch_objc_method(
 
     print(f"Resolving {method_name}...")
 
-    resolved_addr, _, _, error = resolve_method_address(frame, class_name, selector, is_instance_method)
+    resolved_addr, _, _, error, _ = resolve_method_address(frame, class_name, selector, is_instance_method)
     if error:
         result.SetError(error)
         return

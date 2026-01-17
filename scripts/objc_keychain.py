@@ -16,6 +16,7 @@ import lldb
 import os
 import plistlib
 import sys
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 # Add the script directory to path for imports
@@ -96,6 +97,40 @@ def _extract_nsdata_bytes(target: lldb.SBTarget, nsdata_value: lldb.SBValue, ver
     return data
 
 
+def _extract_nsdate_timestamp(
+    target: lldb.SBTarget, nsdate_value: lldb.SBValue, verbose: bool = False
+) -> Optional[float]:
+    """
+    Extract timestamp from an NSDate object.
+
+    Returns: Unix timestamp as float or None if extraction fails
+    """
+    if not nsdate_value.IsValid():
+        return None
+
+    # Get the time interval since reference date
+    expr = f"""
+    @import Foundation;
+    NSDate *date_obj = (NSDate *){nsdate_value.GetValueAsUnsigned()};
+    (double)[date_obj timeIntervalSince1970];
+    """
+
+    result = target.EvaluateExpression(expr)
+    if not result.IsValid() or result.GetError().Fail():
+        if verbose:
+            print(f"[DEBUG] Failed to get timestamp: {result.GetError()}")
+        return None
+
+    # Get the timestamp as a double
+    try:
+        timestamp = float(result.GetValue())
+        return timestamp
+    except (ValueError, TypeError):
+        if verbose:
+            print("[DEBUG] Failed to convert timestamp to float")
+        return None
+
+
 def _parse_keychain_dict(
     target: lldb.SBTarget, dict_value: lldb.SBValue, class_value: str, verbose: bool = False
 ) -> Optional[Dict[str, Any]]:
@@ -111,12 +146,6 @@ def _parse_keychain_dict(
 
     result_dict = {"class": class_value}
 
-    # For now, use the object description as a fallback
-    # This ensures the command doesn't hang during the transition
-    description = dict_value.GetObjectDescription()
-    if description:
-        result_dict["_raw_description"] = description
-
     try:
         # Get all keys from the dictionary
         expr = f"""
@@ -130,7 +159,6 @@ def _parse_keychain_dict(
             if verbose:
                 error_msg = keys_result.GetError().GetCString() if keys_result.IsValid() else "Invalid result"
                 print(f"[DEBUG] Failed to get dictionary keys: {error_msg}")
-            # Return the dict with description fallback
             return result_dict
 
         num_keys = keys_result.GetNumChildren()
@@ -178,9 +206,8 @@ def _parse_keychain_dict(
                 data_bytes = _extract_nsdata_bytes(target, val_result, verbose)
                 if data_bytes is not None:
                     result_dict[key_str] = data_bytes
-                else:
-                    # Fallback to description if extraction fails
-                    result_dict[key_str] = val_result.GetObjectDescription() or ""
+                elif verbose:
+                    print(f"[DEBUG] Failed to extract NSData for key '{key_str}', skipping")
             elif "NSString" in type_name or "NSCFString" in type_name:
                 # Extract string value
                 string_val = val_result.GetSummary()
@@ -194,18 +221,20 @@ def _parse_keychain_dict(
                 # Extract number value
                 num_val = val_result.GetValueAsUnsigned()
                 result_dict[key_str] = num_val
-            else:
-                # For other types, use the object description
-                desc = val_result.GetObjectDescription()
-                if desc:
-                    result_dict[key_str] = desc
+            elif "NSDate" in type_name or "NSCFDate" in type_name:
+                # Extract timestamp from NSDate
+                timestamp = _extract_nsdate_timestamp(target, val_result, verbose)
+                if timestamp is not None:
+                    result_dict[key_str] = timestamp
                 elif verbose:
-                    print(f"[DEBUG] Unknown type for key '{key_str}': {type_name}")
+                    print(f"[DEBUG] Failed to extract NSDate for key '{key_str}', skipping")
+            elif verbose:
+                # For unknown types, log and skip
+                print(f"[DEBUG] Skipping unknown type for key '{key_str}': {type_name}")
 
     except Exception as e:
         if verbose:
             print(f"[DEBUG] Exception during dict parsing: {e}")
-        # Return the dict with description fallback
         pass
 
     return result_dict
@@ -301,7 +330,7 @@ def _format_keychain_item(item_dict: Dict[str, Any], verbose: bool = False) -> s
     lines.append(f"Class: {class_value}")
 
     # Common fields to look for in order
-    fields = ["agrp", "acct", "svce", "labl", "v_Data"]
+    fields = ["agrp", "acct", "svce", "labl", "v_Data", "cdat", "mdat"]
 
     for field in fields:
         if field in item_dict:
@@ -316,6 +345,13 @@ def _format_keychain_item(item_dict: Dict[str, Any], verbose: bool = False) -> s
                 else:
                     display_value = hex_str
                 lines.append(f"  {field}: {display_value} ({len(value)} bytes)")
+            elif isinstance(value, float):
+                # Format timestamp as readable date
+                try:
+                    date_str = datetime.fromtimestamp(value).strftime("%Y-%m-%d %H:%M:%S")
+                    lines.append(f"  {field}: {date_str}")
+                except (ValueError, OSError):
+                    lines.append(f"  {field}: {value}")
             elif isinstance(value, int):
                 lines.append(f"  {field}: {value}")
             elif isinstance(value, str):
@@ -333,6 +369,13 @@ def _format_keychain_item(item_dict: Dict[str, Any], verbose: bool = False) -> s
         if key not in fields and key != "class" and not key.startswith("_"):
             if isinstance(value, bytes):
                 lines.append(f"  {key}: <{len(value)} bytes>")
+            elif isinstance(value, float):
+                # Format timestamp as readable date
+                try:
+                    date_str = datetime.fromtimestamp(value).strftime("%Y-%m-%d %H:%M:%S")
+                    lines.append(f"  {key}: {date_str}")
+                except (ValueError, OSError):
+                    lines.append(f"  {key}: {value}")
             else:
                 lines.append(f"  {key}: {value}")
 
@@ -545,8 +588,17 @@ def extract_keychain_items(
     for i, item in enumerate(all_items):
         # Add an index field to each item
         item_with_index = {"index": i + 1}
-        # Copy all fields from the original item
-        item_with_index.update(item)
+        # Copy all fields from the original item, converting timestamps to datetime objects
+        for key, value in item.items():
+            if isinstance(value, float):
+                # Convert Unix timestamp to datetime object for proper plist serialization
+                try:
+                    item_with_index[key] = datetime.fromtimestamp(value)
+                except (ValueError, OSError):
+                    # If conversion fails, keep as float
+                    item_with_index[key] = value
+            else:
+                item_with_index[key] = value
         plist_items.append(item_with_index)
 
     # Create the full plist structure

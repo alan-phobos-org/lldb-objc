@@ -246,7 +246,7 @@ def main():
     print("Testing okeychain command")
     print("=" * 60)
 
-    passed, total = run_shared_test_suite(
+    passed, total, elapsed, results = run_shared_test_suite(
         "okeychain tests",
         get_test_specs(),
         scripts=["scripts"],

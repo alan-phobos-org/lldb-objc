@@ -318,6 +318,7 @@ def find_objc_classes(
                 print("Performance Summary: (from cache)")
                 print(f"  Total time:     {timing['total']:.3f}s")
                 print(f"  Classes:        {class_count:,} total, {len(class_names):,} matched")
+                print(f"  Batch size:     {batch_size}")
                 print("  Source:         Cached (use --reload to refresh)")
             else:
                 print("Performance Summary:")
