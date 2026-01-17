@@ -50,10 +50,6 @@ ocls Greeter --ivars --properties
 osel Greeter *
 obrk -[Greeter sayHello:]
 oinstance (id)[[Greeter alloc] init]
-
-# These may have degraded output without symbols
-oexplain $pc          # Less symbol names in disassembly
-odecompile $pc        # Function boundaries may be unclear
 ```
 
 ## Expected Differences from Debug Build

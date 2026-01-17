@@ -116,9 +116,6 @@ def install():
         "objc_protos.py",
         "objc_pool.py",
         "objc_instance.py",
-        "objc_explain.py",
-        "objc_decompile.py",
-        "objc_llm.py",
         "objc_utils.py",
         "objc_core.py",
         "objc_sandbox.py",
@@ -167,8 +164,6 @@ def install():
     print("  opool      - Find instances in autorelease pools")
     print("  oinstance  - Inspect Objective-C object instances")
     print("  osbx       - Show sandbox restrictions for process")
-    print("  oexplain   - Explain disassembly via LLM")
-    print("  odecompile - Decompile function via LLM")
     print("  oreload    - Reload all commands (useful for development)")
     print("\nStart LLDB to use the commands.")
 

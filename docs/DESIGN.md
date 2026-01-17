@@ -13,7 +13,7 @@ High-level architecture, design decisions, and planned features for LLDB Objecti
 ┌───────────────────────────▼─────────────────────────────────────┐
 │                    Shared Utilities                              │
 │  objc_utils.py (LLDB-dependent)  │  objc_core.py (Pure Python)  │
-│  objc_llm.py (LLM integration)   │  version.py (Git versioning) │
+│  version.py (Git versioning)                                     │
 └───────────────────────────┬─────────────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────────────┐
@@ -96,26 +96,6 @@ Note: Uses `SBAddress` throughout to properly handle ASLR on all platforms.
 │ 3. Batched class_getName() (batch=35)   │
 │ 4. Pattern match + cache results        │
 │ Time: ~12s first run, <0.01s cached     │
-└─────────────────────────────────────────┘
-```
-
-### LLM Integration (oexplain, odecompile)
-```
-┌─────────────────────────────────────────┐
-│ objc_llm.py                             │
-├─────────────────────────────────────────┤
-│ get_symbol_for_address(addr)            │
-│ get_disassembly(addr)                   │
-│ get_register_context()                  │
-│ run_llm_cli(prompt, ...)                │
-│ run_claude_cli(prompt, ...)             │
-└─────────────────────────────────────────┘
-          │
-          ▼
-┌─────────────────────────────────────────┐
-│ External CLI Tools                       │
-│ - llm (Simon Willison's tool)           │
-│ - claude (Anthropic CLI)                │
 └─────────────────────────────────────────┘
 ```
 

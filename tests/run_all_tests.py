@@ -36,8 +36,6 @@ TEST_FILES = [
     "test_owatch.py",
     "test_opool.py",
     "test_oinstance.py",
-    "test_oexplain.py",
-    "test_odecompile.py",
     "test_odump.py",
     "test_oentitlements.py",
     "test_okeychain.py",

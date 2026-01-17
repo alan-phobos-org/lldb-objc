@@ -40,8 +40,6 @@ COMMAND_MODULES = [
     ".objc_protos",
     ".objc_pool",
     ".objc_instance",
-    ".objc_explain",
-    ".objc_decompile",
     ".objc_sandbox",
     ".objc_dump",
     ".objc_entitlements",

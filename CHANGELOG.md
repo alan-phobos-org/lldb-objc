@@ -57,28 +57,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.2.1] - 2026-01-12
 
 ### Added
-- `--claude-haiku` flag for `oexplain` and `odecompile` commands
 - Automatic string literal resolution from disassembly addresses
 - Automatic selector resolution from disassembly addresses
-- Platform/architecture info included in LLM context
-
-### Changed
-- Improved LLM prompts with ARM64 calling convention notes
 
 ## [1.2.0] - 2026-01-12
 
 ### Added
-- `oexplain` command for LLM-based disassembly explanation
-  - `--annotate` flag for line-by-line annotation
-  - `--claude` flag to use Claude CLI instead of llm
-- `odecompile` command for LLM-based decompilation
-  - Generates readable pseudo-code from disassembly
-  - `--claude` flag to use Claude CLI instead of llm
 - `opool` command to find instances in autorelease pools
   - `--verbose` flag to show pool contents while searching
 - `oinstance` command for detailed object inspection
   - Supports address, $variable, or expression syntax
-- Shared LLM utilities (`objc_llm.py`) for symbol lookup and CLI wrappers
 - Pure Python core module (`objc_core.py`) for unit testable logic
 - Unit test suite with pytest in `tests/unit/`
 - Build script (`build.sh`) with standardized commands

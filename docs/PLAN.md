@@ -6,7 +6,7 @@ A comprehensive set of LLDB commands for Objective-C runtime introspection, maki
 
 ## Current Stage: v1.3 (Stable)
 
-10 commands covering core debugging use cases: `obrk`, `osel`, `ocls`, `ocall`, `owatch`, `opool`, `oinstance`, `oexplain`, `odecompile`, `osbx`.
+8 commands covering core debugging use cases: `obrk`, `osel`, `ocls`, `ocall`, `owatch`, `opool`, `oinstance`, `osbx`.
 
 Standalone sandbox scanner binary available at `tools/osbx-standalone/`.
 
@@ -14,6 +14,9 @@ Standalone sandbox scanner binary available at `tools/osbx-standalone/`.
 
 ### v1.4
 
-* Remove experimental commands
 * Re-optimise ocls
-* Re-implement shared lldb test session
+* Double-check okeychain works
+
+### v1.5 
+
+* ?

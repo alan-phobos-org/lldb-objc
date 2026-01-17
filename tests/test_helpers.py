@@ -303,8 +303,6 @@ class SharedLLDBSession:
         "objc_watch.py": "owatch",
         "objc_pool.py": "opool",
         "objc_instance.py": "oinstance",
-        "objc_explain.py": "oexplain",
-        "objc_decompile.py": "odecompile",
         "objc_dump.py": "odump",
     }
 

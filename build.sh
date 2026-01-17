@@ -65,11 +65,6 @@ Commands:
   release X.Y.Z    Create release commit and tag
   clean            Remove build artifacts
   status           Show project status (working copy, remote, CI, releases)
-
-Aliases (backward compatibility):
-  test             Alias for unit-test
-  test-int         Alias for integration-test
-  test-all         Alias for integration-test
 EOF
 }
 
@@ -396,15 +391,6 @@ case "${1:-help}" in
 
     status)
         cmd_status
-        ;;
-
-    # Backward compatibility aliases
-    test)
-        cmd_unit_test
-        ;;
-
-    test-int|test-all)
-        cmd_integration_test
         ;;
 
     help|*)
