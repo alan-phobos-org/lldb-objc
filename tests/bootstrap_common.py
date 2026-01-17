@@ -30,13 +30,17 @@ def verify_paths(binary_path: str, build_hint: str = None) -> None:
 
 
 def run_lldb_session(binary_path: str, commands: str) -> None:
-    """Run an interactive LLDB session with the given commands."""
+    """Run an interactive LLDB session with the given commands.
+
+    Uses --no-lldbinit to skip loading ~/.lldbinit, ensuring scripts are
+    loaded from the working directory instead of ~/.lldb-objc.
+    """
     with tempfile.NamedTemporaryFile(mode="w", suffix=".lldb", delete=False) as f:
         f.write(commands)
         command_file = f.name
 
     try:
-        subprocess.run(["lldb", "-s", command_file], check=False)
+        subprocess.run(["lldb", "--no-lldbinit", "-s", command_file], check=False)
     finally:
         os.unlink(command_file)
 

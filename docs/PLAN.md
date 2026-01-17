@@ -14,8 +14,6 @@ Standalone sandbox scanner binary available at `tools/osbx-standalone/`.
 
 ### v1.4
 
-* Migrate okeychain to dump full data values
-
 ### v1.5 
 
 * ?

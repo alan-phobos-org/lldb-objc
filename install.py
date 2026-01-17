@@ -113,7 +113,6 @@ def install():
         "objc_cls.py",
         "objc_call.py",
         "objc_watch.py",
-        "objc_protos.py",
         "objc_pool.py",
         "objc_instance.py",
         "objc_utils.py",
