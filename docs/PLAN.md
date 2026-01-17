@@ -6,97 +6,21 @@ A comprehensive set of LLDB commands for Objective-C runtime introspection, maki
 
 ## Current Stage: v1.3 (Stable)
 
-The project has a solid foundation with 11 commands covering core debugging use cases:
+11 commands covering core debugging use cases: `obrk`, `osel`, `ocls`, `ocall`, `owatch`, `oprotos`, `opool`, `oinstance`, `oexplain`, `odecompile`, `osbx`.
 
-| Status | Command | Description |
-|--------|---------|-------------|
-| Done | `obrk` | Set breakpoints on ObjC methods |
-| Done | `osel` | Find methods in a class |
-| Done | `ocls` | Find classes by pattern (optimized + hierarchy + ivars/properties) |
-| Done | `ocall` | Call ObjC methods from CLI |
-| Done | `owatch` | Auto-logging breakpoints |
-| Done | `oprotos` | Protocol conformance finder |
-| Done | `opool` | Find instances in autorelease pools |
-| Done | `oinstance` | Detailed object inspection |
-| Done | `oexplain` | LLM-powered disassembly explanation |
-| Done | `odecompile` | LLM-powered decompilation |
-| Done | `osbx` | Sandbox filesystem access scanner |
+Standalone sandbox scanner binary available at `tools/osbx-standalone/`.
 
-Additionally, a standalone sandbox scanner binary is available at `tools/osbx-standalone/` for bulk scanning scenarios.
+## Issue Tracking
 
-## Next Milestone: v1.4
-
-### Priority 1: Cross-Class Method Search
-
-Extend `osel` to search across multiple classes:
+Issues, features, and backlog are tracked with [Beads](https://github.com/steveyegge/beads):
 
 ```bash
-osel CS* symbol*
-# -[CSSymbolOwner symbolWithName:]
-# -[CSSymbolicator symbolOwnerForName:]
-# Total: 4 methods in 3 classes
+bd ready              # Show next work item
+bd list --label v1.4  # v1.4 milestone issues
+bd list --label backlog  # Backlog items
+bd list --type bug    # Known issues
+bd show <id>          # Issue details
 ```
-
-**Why**: Currently requires running osel on each class manually.
-
-### Priority 2: Better Error Messages
-
-Add "did you mean" suggestions for common errors:
-
-```bash
-(lldb) ocall [NSDate distancePast]
-error: Invalid receiver 'NSDate'. For instance methods, use $variable or hex address.
-Did you mean: +[NSDate distantPast]?
-```
-
-**Why**: Common typos and confusion between class/instance methods.
-
-### Priority 3: Shared Cache Class Scanning
-
-Support classes in the dyld shared cache that aren't directly loaded:
-
-```bash
-ocls --shared-cache NS*
-```
-
-**Why**: Many system classes are in shared cache but not enumerated by `objc_getClassList`.
-
-## Backlog
-
-### High Value
-
-| Feature | Description | Complexity |
-|---------|-------------|------------|
-| `oheap` | Find live instances on heap via malloc introspection | High |
-| `ocat` | Category method inspector / collision detector | Medium |
-| Fuzzy matching | Suggest corrections for typos | Low |
-
-### Medium Value
-
-| Feature | Description | Complexity |
-|---------|-------------|------------|
-| `oswizzle` | Runtime method swizzling | Medium |
-| `oblock` | Block inspector (signature, invoke) | Medium |
-| Test coverage | Add more edge case tests | Low |
-| CI/CD | GitHub Actions for unit tests | Low |
-
-### Low Priority
-
-| Feature | Description | Complexity |
-|---------|-------------|------------|
-| Cross-platform | Linux support for unit tests | Low |
-| `ograph` | Class hierarchy visualization | Medium |
-| `omemory` | Memory layout inspector | High |
-
-## Known Issues
-
-### Bitfield Position Tracking
-The `--ivars` output shows bitfields with bit width but not position within the byte. The runtime's `ivar_getOffset()` only returns byte offset, not bit position.
-
-### Integration Test Stability
-Some tests are timing-sensitive and may fail intermittently:
-- `test_hierarchy.py` NSMutable* timeout on slow machines
-- Shared LLDB session can accumulate state
 
 ## Performance Notes
 
