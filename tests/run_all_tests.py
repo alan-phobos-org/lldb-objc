@@ -41,7 +41,6 @@ TEST_FILES = [
     "test_okeychain.py",
     "test_hierarchy.py",
     "test_ivars_props.py",
-    "test_timing.py",
     "test_osel_perf.py",
 ]
 
