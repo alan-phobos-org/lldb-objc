@@ -12,6 +12,7 @@ Custom LLDB commands for working with Objective-C methods, including private sym
 - **oprotos**: Find protocol conformance across all classes
 - **opool**: Find instances of Objective-C classes in autorelease pools
 - **oinstance**: Inspect Objective-C object instances with detailed ivar information
+- **odump**: Dump NSData contents or raw memory to a file
 - Works with private classes and methods
 - Supports both instance methods (`-`) and class methods (`+`)
 - Runtime resolution using `NSClassFromString`, `NSSelectorFromString`, and `class_getMethodImplementation`
@@ -330,6 +331,50 @@ ClassName (0x123456789abc)
 - Supports tagged pointers and regular heap objects
 - Decodes ivar values based on Objective-C type encodings
 - Works with any object address, variable, or expression
+
+### odump - Dump Memory to File
+
+Dump NSData contents or raw memory regions to a file.
+
+**Syntax:**
+```
+odump <expr> <output_path>              # Dump NSData to file
+odump <expr> <output_path> --size=N     # Dump N bytes from address
+odump <expr> <output_path> --force      # Use --force for protected memory
+```
+
+**Arguments:**
+- `<expr>`: Address or ObjC expression (`0x12345`, `$0`, `$arg1`, `[self data]`, `myObject.data`)
+- `<output_path>`: Output file path
+- `--size=N`: Raw memory mode - dump N bytes (supports hex `0x100` or decimal `256`)
+- `--force`: Pass through to `memory read --force` for protected memory
+
+**Examples:**
+```
+# Dump NSData to file
+odump $0 /tmp/data.bin
+
+# Dump NSData from expression
+odump [self imageData] /tmp/image.bin
+
+# Dump 256 bytes of raw memory (hex size)
+odump 0x12345678 /tmp/mem.bin --size=0x100
+
+# Dump 1024 bytes of raw memory (decimal size)
+odump $myBuffer /tmp/buffer.bin --size=1024
+
+# Force dump protected memory
+odump 0xDEADBEEF /tmp/protected.bin --size=64 --force
+```
+
+**Modes:**
+- **NSData mode (default)**: When `--size` is NOT provided, treats expression as NSData object and calls `[obj bytes]` and `[obj length]` via runtime
+- **Raw memory mode**: When `--size=N` is provided, treats expression as start address and dumps N bytes
+
+**Notes:**
+- Silently overwrites existing output files
+- Supports NSData subclasses (NSMutableData, NSConcreteData, etc.)
+- Uses `memory read --outfile` internally for reliable binary output
 
 ## How It Works
 

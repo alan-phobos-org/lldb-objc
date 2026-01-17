@@ -43,6 +43,7 @@ COMMAND_MODULES = [
     ".objc_explain",
     ".objc_decompile",
     ".objc_sandbox",
+    ".objc_dump",
 ]
 
 # Track loaded modules for reloading

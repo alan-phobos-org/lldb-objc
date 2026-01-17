@@ -307,6 +307,7 @@ class SharedLLDBSession:
         "objc_instance.py": "oinstance",
         "objc_explain.py": "oexplain",
         "objc_decompile.py": "odecompile",
+        "objc_dump.py": "odump",
     }
 
     def __init__(self, scripts=None, load_private_framework=True, timeout=30, validate_commands=True):
