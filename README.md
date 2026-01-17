@@ -13,6 +13,8 @@ Custom LLDB commands for working with Objective-C methods, including private sym
 - **opool**: Find instances of Objective-C classes in autorelease pools
 - **oinstance**: Inspect Objective-C object instances with detailed ivar information
 - **odump**: Dump NSData contents or raw memory to a file
+- **oentitlements**: Extract and display process entitlements in human-readable format
+- **okeychain**: Query and list keychain items accessible to the process
 - Works with private classes and methods
 - Supports both instance methods (`-`) and class methods (`+`)
 - Runtime resolution using `NSClassFromString`, `NSSelectorFromString`, and `class_getMethodImplementation`
@@ -375,6 +377,120 @@ odump 0xDEADBEEF /tmp/protected.bin --size=64 --force
 - Silently overwrites existing output files
 - Supports NSData subclasses (NSMutableData, NSConcreteData, etc.)
 - Uses `memory read --outfile` internally for reliable binary output
+
+### oentitlements - Extract Process Entitlements
+
+Extract and display the entitlements of the current process, showing which capabilities and permissions it has.
+
+**Syntax:**
+```
+oentitlements              # Show entitlements in JSON format
+oentitlements --xml        # Show raw XML plist format
+oentitlements --verbose    # Show detailed debug info
+```
+
+**Examples:**
+```
+# Display entitlements in readable JSON format
+oentitlements
+
+# Show raw XML plist
+oentitlements --xml
+
+# Debug mode with extraction details
+oentitlements --verbose
+```
+
+**Output:**
+```
+Process Entitlements:
+============================================================
+{
+  "application-identifier": "TEAM123.com.example.app",
+  "com.apple.developer.team-identifier": "TEAM123",
+  "get-task-allow": true,
+  "keychain-access-groups": [
+    "TEAM123.com.example.app",
+    "TEAM123.shared"
+  ]
+}
+============================================================
+
+Keychain Access Groups (2):
+  - TEAM123.com.example.app
+  - TEAM123.shared
+```
+
+**Notes:**
+- Uses `csops` system call for efficient extraction (falls back to `__LINKEDIT` parsing)
+- Highlights keychain-access-groups which determine keychain item accessibility
+- Useful for debugging keychain access issues and understanding app permissions
+- Works on both iOS and macOS
+
+### okeychain - Query Keychain Items
+
+Query and list all keychain items accessible to the current process based on its entitlements.
+
+**Syntax:**
+```
+okeychain list                      # List all accessible keychain items
+okeychain list --filter=<query>     # Filter by access group or account
+okeychain list --verbose            # Show detailed debug info
+okeychain                           # Same as 'okeychain list'
+```
+
+**Examples:**
+```
+# List all keychain items accessible to the process
+okeychain list
+
+# Filter keychain items
+okeychain list --filter=apple
+okeychain list --filter=AuthToken
+
+# Show verbose debug output
+okeychain list --verbose
+
+# Default to list command
+okeychain
+```
+
+**Output:**
+```
+Found 3 keychain item(s)
+============================================================
+
+Item 1:
+------------------------------------------------------------
+Class: genp
+  agrp: TEAM123.com.example.app
+  acct: user@example.com
+  svce: com.example.service
+  labl: User Credentials
+  v_Data: <encrypted data...>
+
+Item 2:
+------------------------------------------------------------
+Class: inet
+  agrp: apple
+  acct: username
+  v_Data: <encrypted data...>
+...
+```
+
+**Keychain Classes Queried:**
+- `kSecClassGenericPassword` (genp) - Generic passwords
+- `kSecClassInternetPassword` (inet) - Internet passwords
+- `kSecClassCertificate` (cert) - Certificates
+- `kSecClassKey` (keys) - Cryptographic keys
+- `kSecClassIdentity` (idnt) - Identities (cert + private key)
+
+**Notes:**
+- Only shows items the process has access to based on its entitlements
+- Use `oentitlements` to see which keychain-access-groups the process can access
+- Useful for debugging keychain access issues and understanding what data is stored
+- The device must be unlocked for keychain access
+- Works on both iOS and macOS
 
 ## How It Works
 

@@ -8,10 +8,14 @@ lldb-objc provides LLDB Python scripts for enhanced Objective-C debugging, inclu
 
 - `scripts/objc_breakpoint.py` - The `obrk` command implementation
 - `scripts/objc_dump.py` - The `odump` command for dumping NSData/memory to files
+- `scripts/objc_entitlements.py` - The `oentitlements` command for extracting process entitlements
+- `scripts/objc_keychain.py` - The `okeychain` command for querying keychain items
 - `scripts/objc_utils.py` - Utility functions for method resolution
 - `scripts/objc_core.py` - Core parsing and formatting functions
 - `tests/test_obrk.py` - Comprehensive test suite for breakpoint functionality
 - `tests/test_odump.py` - Test suite for odump command
+- `tests/test_oentitlements.py` - Test suite for oentitlements command
+- `tests/test_okeychain.py` - Test suite for okeychain command
 
 ## Important Patterns
 
