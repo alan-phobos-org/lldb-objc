@@ -3,7 +3,7 @@
 LLDB script for finding Objective-C classes matching wildcard patterns.
 
 Usage:
-    ocls [--reload] [--clear-cache] [--verbose] [--ivars] [--properties] [--dylib pattern] [pattern]
+    ocls [--reload] [--clear-cache] [--verbose] [--ivars] [--properties] [--dylib pattern] [--experiment] [pattern]
 
 Examples:
     ocls                       # List all classes (cached after first run)
@@ -22,6 +22,7 @@ Examples:
     ocls --dylib *Foundation* NS*  # NS classes from Foundation framework only
     ocls --dylib *CoreSymbolication* CS*  # CS classes from CoreSymbolication.framework (fuzzy match)
     ocls --dylib *CoreFoundation*  # All classes from CoreFoundation
+    ocls --experiment --reload --verbose  # Test image-based enumeration approach
 
 Pattern matching:
   - No wildcards: exact match (case-sensitive) - uses fast-path lookup
@@ -108,6 +109,7 @@ def find_objc_classes(
         --ivars: Show instance variables for single class match
         --properties: Show properties for single class match
         --dylib <pattern>: Filter to classes from dylibs matching pattern (supports wildcards)
+        --experiment: Use experimental image-based monolithic enumeration approach
     """
     target = debugger.GetSelectedTarget()
     process = target.GetProcess()
@@ -117,13 +119,14 @@ def find_objc_classes(
         return
 
     # Parse input: [--reload] [--clear-cache] [--batch-size=N] [--verbose]
-    # [--ivars] [--properties] [--dylib pattern] [pattern]
+    # [--ivars] [--properties] [--dylib pattern] [--experiment] [pattern]
     args = command.strip().split()
     force_reload = "--reload" in args
     clear_cache = "--clear-cache" in args
     verbose = "--verbose" in args
     show_ivars = "--ivars" in args
     show_properties = "--properties" in args
+    use_experiment = "--experiment" in args
 
     # Parse batch size and dylib filter
     batch_size = DEFAULT_BATCH_SIZE
@@ -204,7 +207,9 @@ def find_objc_classes(
         from_cache = False
     else:
         # Standard path: enumerate all classes (with caching)
-        class_names, timing, class_count, from_cache = get_all_classes(frame, pattern, force_reload, batch_size)
+        class_names, timing, class_count, from_cache = get_all_classes(
+            frame, pattern, force_reload, batch_size, use_experiment=use_experiment
+        )
 
     # Display results with hierarchy information based on match count
     num_matches = len(class_names)
@@ -326,6 +331,9 @@ def find_objc_classes(
                 print(f"  Classes:        {class_count:,} total, {len(class_names):,} matched")
                 print(f"  Throughput:     {class_count / timing['total']:.0f} classes/sec")
                 print(f"  Batch size:     {batch_size}")
+                # Show which approach was used (if available)
+                if "approach" in timing:
+                    print(f"  Approach:       {timing['approach']}")
                 print("\n  Timing breakdown:")
                 print(f"    Setup:        {timing['setup']:.2f}s ({timing['setup'] / timing['total'] * 100:.1f}%)")
                 print(
@@ -1505,6 +1513,116 @@ def _get_classes_for_image(
     return class_names, class_count
 
 
+def build_image_based_monolithic_expr() -> str:
+    """
+    EXPERIMENTAL: Build monolithic expression using objc_copyImageNames + objc_copyClassNamesForImage.
+
+    This approach enumerates all classes by iterating through loaded images and getting
+    class names per image. Potentially faster than objc_copyClassList + class_getName
+    because objc_copyClassNamesForImage returns strings directly.
+
+    Strategy:
+    1. Get all loaded images via objc_copyImageNames
+    2. For each image, get class names via objc_copyClassNamesForImage (returns strings!)
+    3. Build consolidated buffer with all class names
+
+    Tradeoff:
+    - Current: 1× objc_copyClassList + ~10K× class_getName() calls
+    - Experiment: ~200× image iterations + ~200× objc_copyClassNamesForImage calls
+
+    Buffer format (same as standard monolithic):
+        [count: 4 bytes]           - Number of classes
+        [total_len: 4 bytes]       - Total string data length
+        [offsets: (count+1)*4]     - Offsets into string data (last = total_len)
+        [strings: total_len]       - Concatenated null-terminated class names
+
+    Returns:
+        Expression string to evaluate
+    """
+    return """
+(void *)(^{
+    // Step 1: Get all loaded images
+    unsigned int img_count = 0;
+    const char **image_names = (const char **)objc_copyImageNames(&img_count);
+    if (!image_names || img_count == 0) {
+        if (image_names) free(image_names);
+        return (void *)0;
+    }
+
+    // Step 2: First pass - calculate total classes and string length
+    unsigned int total_classes = 0;
+    size_t total_str_len = 0;
+
+    for (unsigned int img_idx = 0; img_idx < img_count; img_idx++) {
+        unsigned int cls_count = 0;
+        const char **cls_names = (const char **)objc_copyClassNamesForImage(image_names[img_idx], &cls_count);
+        if (cls_names) {
+            total_classes += cls_count;
+            // Calculate string lengths
+            for (unsigned int i = 0; i < cls_count; i++) {
+                if (cls_names[i]) {
+                    total_str_len += strlen(cls_names[i]) + 1;
+                }
+            }
+            free(cls_names);
+        }
+    }
+
+    if (total_classes == 0) {
+        free(image_names);
+        return (void *)0;
+    }
+
+    // Step 3: Allocate buffer: [count:4][total_len:4][offsets:(count+1)*4][strings:total_len]
+    size_t header_size = 8;
+    size_t offsets_size = (total_classes + 1) * sizeof(unsigned int);
+    size_t buf_size = header_size + offsets_size + total_str_len;
+
+    char *buf = (char *)malloc(buf_size);
+    if (!buf) {
+        free(image_names);
+        return (void *)0;
+    }
+
+    // Write header
+    *(unsigned int *)buf = total_classes;
+    *((unsigned int *)buf + 1) = (unsigned int)total_str_len;
+
+    // Setup pointers
+    unsigned int *offsets = (unsigned int *)(buf + header_size);
+    char *strings = buf + header_size + offsets_size;
+
+    // Step 4: Second pass - copy all class names
+    unsigned int cls_idx = 0;
+    unsigned int str_offset = 0;
+
+    for (unsigned int img_idx = 0; img_idx < img_count; img_idx++) {
+        unsigned int cls_count = 0;
+        const char **cls_names = (const char **)objc_copyClassNamesForImage(image_names[img_idx], &cls_count);
+        if (cls_names) {
+            for (unsigned int i = 0; i < cls_count; i++) {
+                if (cls_names[i]) {
+                    offsets[cls_idx] = str_offset;
+                    size_t len = strlen(cls_names[i]) + 1;
+                    memcpy(strings + str_offset, cls_names[i], len);
+                    str_offset += len;
+                    cls_idx++;
+                } else {
+                    offsets[cls_idx] = 0xFFFFFFFF;
+                    cls_idx++;
+                }
+            }
+            free(cls_names);
+        }
+    }
+    offsets[total_classes] = str_offset;
+
+    free(image_names);
+    return (void *)buf;
+}())
+"""
+
+
 def build_monolithic_class_enumeration_expr() -> str:
     """
     Build a single monolithic expression that enumerates ALL Objective-C classes.
@@ -1850,6 +1968,7 @@ def get_all_classes(
     pattern: Optional[str] = None,
     force_reload: bool = False,
     batch_size: Optional[int] = None,
+    use_experiment: bool = False,
 ) -> Tuple[List[str], TimingDict, int, bool]:
     """
     Get all Objective-C classes using objc_copyClassList.
@@ -1873,6 +1992,7 @@ def get_all_classes(
         pattern: Optional pattern to filter class names
         force_reload: If True, bypass cache and reload from runtime
         batch_size: Number of classes to process per batch (fallback only)
+        use_experiment: If True, use image-based monolithic approach instead of class-list approach
 
     Returns:
         Tuple of (class_names, timing_dict, class_count, from_cache)
@@ -1950,7 +2070,15 @@ def get_all_classes(
     expr_options = get_expression_options(timeout_seconds=60.0)
 
     # Build and execute monolithic expression
-    monolithic_expr = build_monolithic_class_enumeration_expr()
+    if use_experiment:
+        # EXPERIMENTAL: Use image-based approach
+        monolithic_expr = build_image_based_monolithic_expr()
+        timing["approach"] = "image-based"
+    else:
+        # STANDARD: Use class list + getName approach
+        monolithic_expr = build_monolithic_class_enumeration_expr()
+        timing["approach"] = "class-list"
+
     monolithic_result = evaluate_expression(frame, monolithic_expr, options=expr_options)
     timing["expression_count"] += 1
 
@@ -1961,6 +2089,7 @@ def get_all_classes(
         buffer_ptr = monolithic_result.GetValueAsUnsigned()
         if buffer_ptr != 0:
             # Parse the monolithic buffer (2 memory reads: header + data)
+            # Both approaches use the same buffer format
             class_names, class_count = parse_monolithic_class_buffer(buffer_ptr, process)
             timing["memory_read_count"] += 2
 

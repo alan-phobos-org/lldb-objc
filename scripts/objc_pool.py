@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
 LLDB script for finding instances of Objective-C classes in autorelease pools.
-Usage: opool [--verbose] ClassName  # Find instances in autorelease pools
-       opool NSString               # Find NSString instances
-       opool NSDate                 # Find NSDate instances
-       opool --verbose NSString     # Show full pool debug output
+Usage: opool [--verbose] [ClassName]  # Find instances in autorelease pools
+       opool                          # Dump all objects in pools
+       opool NSString                 # Find NSString instances
+       opool NSDate                   # Find NSDate instances
+       opool --verbose                # Show full pool debug output
+       opool --verbose NSString       # Show full pool debug output (filtered)
 
-This command scans autorelease pools to find instances of the specified class.
+This command scans autorelease pools. Without a class name, it dumps all objects.
+With a class name, it finds instances of the specified class.
 Use --verbose to show the raw pool contents from _objc_autoreleasePoolPrint().
 """
 
@@ -35,14 +38,14 @@ from objc_utils import evaluate_expression
 
 
 def find_in_autorelease_pool(
-    frame: lldb.SBFrame, class_name: str, verbose: bool = False
+    frame: lldb.SBFrame, class_name: str | None = None, verbose: bool = False
 ) -> Tuple[List[Tuple[int, str]], str]:
     """
     Find instances of a class by scanning autorelease pools.
 
     Args:
         frame: Current stack frame for expression evaluation
-        class_name: Name of the class to search for
+        class_name: Name of the class to search for, or None to dump all objects
         verbose: If True, return the full pool contents
 
     Returns:
@@ -53,16 +56,18 @@ def find_in_autorelease_pool(
     instances = []
     process = frame.GetThread().GetProcess()
 
-    # Step 1: Get the class pointer
-    class_expr = f'(Class)NSClassFromString(@"{class_name}")'
-    class_result = evaluate_expression(frame, class_expr)
+    # Step 1: Get the class pointer (if filtering by class)
+    class_ptr = 0
+    if class_name:
+        class_expr = f'(Class)NSClassFromString(@"{class_name}")'
+        class_result = evaluate_expression(frame, class_expr)
 
-    if not class_result.IsValid() or class_result.GetError().Fail():
-        return instances, ""
+        if not class_result.IsValid() or class_result.GetError().Fail():
+            return instances, ""
 
-    class_ptr = class_result.GetValueAsUnsigned()
-    if class_ptr == 0:
-        return instances, ""
+        class_ptr = class_result.GetValueAsUnsigned()
+        if class_ptr == 0:
+            return instances, ""
 
     # Step 2: Scan autorelease pools
     # The _objc_autoreleasePoolPrint() function prints to stderr AND returns the string
@@ -141,12 +146,19 @@ def find_in_autorelease_pool(
             if addr == 0 or addr in collected_addresses:
                 continue
 
-            # Check if this is an instance of our target class
+            # Check if this is an instance of our target class (if filtering)
             # Use isKindOfClass to support subclasses
-            check_expr = f"(BOOL)[(id)0x{addr:x} isKindOfClass:(Class)0x{class_ptr:x}]"
-            check_result = evaluate_expression(frame, check_expr)
+            is_match = False
+            if class_ptr:
+                # Filtering by class
+                check_expr = f"(BOOL)[(id)0x{addr:x} isKindOfClass:(Class)0x{class_ptr:x}]"
+                check_result = evaluate_expression(frame, check_expr)
+                is_match = check_result.IsValid() and check_result.GetValueAsUnsigned() == 1
+            else:
+                # No class filter - include all objects
+                is_match = True
 
-            if check_result.IsValid() and check_result.GetValueAsUnsigned() == 1:
+            if is_match:
                 collected_addresses.add(addr)
 
                 # Get description
@@ -176,7 +188,7 @@ def find_pool_instances_command(
     """
     LLDB command to find instances of an Objective-C class in autorelease pools.
 
-    Usage: opool [--verbose] ClassName
+    Usage: opool [--verbose] [ClassName]
     """
     target = debugger.GetSelectedTarget()
     process = target.GetProcess()
@@ -186,27 +198,20 @@ def find_pool_instances_command(
         return
 
     # Parse arguments
-    args = command.strip().split()
-
-    if len(args) < 1:
-        result.SetError("Usage: opool [--verbose] ClassName")
-        return
+    args = command.strip().split() if command.strip() else []
 
     # Check for --verbose flag
     verbose = False
-    if args[0] == "--verbose":
+    if args and args[0] == "--verbose":
         verbose = True
         args = args[1:]
 
-    if len(args) < 1:
-        result.SetError("Usage: opool [--verbose] ClassName")
-        return
+    # Get class name (optional)
+    class_name = args[0] if args else None
 
     # Get current frame
     thread = process.GetSelectedThread()
     frame = thread.GetSelectedFrame()
-
-    class_name = args[0]
 
     # Find instances in autorelease pools
     instances, pool_output = find_in_autorelease_pool(frame, class_name, verbose)
@@ -216,7 +221,10 @@ def find_pool_instances_command(
         print(pool_output)
 
     if not instances:
-        print(f"No instances of {class_name} found in autorelease pools")
+        if class_name:
+            print(f"No instances of {class_name} found in autorelease pools")
+        else:
+            print("No objects found in autorelease pools")
         result.SetStatus(lldb.eReturnStatusSuccessFinishResult)
         return
 

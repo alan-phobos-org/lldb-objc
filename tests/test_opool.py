@@ -108,6 +108,37 @@ def validate_invalid_class_error():
     return validator
 
 
+def validate_dump_all_objects():
+    """Validator that opool dumps all objects when no class filter is specified."""
+
+    def validator(output):
+        # Should find multiple objects when dumping all
+        # We expect to see multiple addresses
+        if output.count("0x") >= 1:
+            return True, "Found objects in autorelease pool"
+        elif "no objects" in output.lower():
+            # Empty pool is also acceptable
+            return True, "No objects in pool (acceptable)"
+        return False, (f"Expected to find objects or 'no objects' message\n    Actual: {output[:300]}")
+
+    return validator
+
+
+def validate_verbose_dump_all():
+    """Validator that opool --verbose dumps raw pool output without class filter."""
+
+    def validator(output):
+        # Verbose output should show raw pool format
+        # Look for autorelease pool markers or objc[PID] format
+        if "AUTORELEASE POOLS" in output or "objc[" in output or "POOL" in output:
+            return True, "Shows verbose pool output"
+        elif "no objects" in output.lower():
+            return True, "No objects in pool (acceptable)"
+        return False, (f"Expected verbose pool output with markers\n    Actual preview: {output[:300]}")
+
+    return validator
+
+
 def get_test_specs():
     """Return list of test specifications."""
     return [
@@ -126,6 +157,26 @@ def get_test_specs():
                 "opool _NSInlineData",
             ],
             validate_finds_inline_data(),
+        ),
+        # Test dumping all objects (no class filter)
+        (
+            "Dump all objects without class filter",
+            [
+                "ocall +[NSDate distantPast]",  # Create some objects
+                "ocall malloc(0x1000)",
+                "ocall [NSData dataWithBytes:$0 length:0x1000]",
+                "opool",  # No class name - dump all
+            ],
+            validate_dump_all_objects(),
+        ),
+        # Test verbose dump without class filter
+        (
+            "Verbose dump all objects",
+            [
+                "ocall +[NSDate distantPast]",
+                "opool --verbose",  # Verbose without class name
+            ],
+            validate_verbose_dump_all(),
         ),
         # Error handling
         (
@@ -153,13 +204,14 @@ def main():
     categories = {
         "NSConstantDate regression": (0, 1),
         "Autorelease pool": (1, 2),
-        "Error handling": (2, 4),
+        "Dump all objects": (2, 4),
+        "Error handling": (4, 6),
     }
 
     passed, total, elapsed, results = run_shared_test_suite(
         "OPOOL COMMAND TEST SUITE",
         get_test_specs(),
-        scripts=["scripts/objc_pool.py"],
+        scripts=["scripts/objc_call.py", "scripts/objc_pool.py"],
         show_category_summary=categories,
     )
     sys.exit(0 if passed == total else 1)
