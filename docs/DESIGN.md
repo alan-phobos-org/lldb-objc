@@ -7,7 +7,7 @@ High-level architecture, design decisions, and planned features for LLDB Objecti
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         User Commands                            │
-│  obrk  │  osel  │  ocls  │  ocall  │  owatch  │  oprotos  │ ... │
+│  obrk  │  osel  │  ocls  │  ocall  │  owatch  │  opool  │ ... │
 └───────────────────────────┬─────────────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────────────┐

@@ -164,7 +164,6 @@ def install():
     print("  ocls       - Find Objective-C classes by pattern")
     print("  ocall      - Call Objective-C methods from the command line")
     print("  owatch     - Set auto-logging breakpoints (method watcher)")
-    print("  oprotos    - Find classes conforming to a protocol")
     print("  opool      - Find instances in autorelease pools")
     print("  oinstance  - Inspect Objective-C object instances")
     print("  osbx       - Show sandbox restrictions for process")

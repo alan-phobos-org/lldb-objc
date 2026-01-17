@@ -54,11 +54,8 @@ The venv includes all dependencies (pytest, pexpect, etc.). If you're not in the
 | `ocls` | Find classes | `ocls CS* --ivars` |
 | `ocall` | Call methods | `ocall [$0 description]` |
 | `owatch` | Auto-log breakpoints | `owatch --minimal -[NSString init]` |
-| `oprotos` | Protocol conformance | `oprotos --list *Delegate` |
 | `opool` | Find in autorelease pools | `opool NSDate` |
 | `oinstance` | Inspect object | `oinstance $0` |
-| `oexplain` | Explain disassembly | `oexplain $pc` |
-| `odecompile` | Decompile function | `odecompile $pc` |
 | `osbx` | Scan sandbox writable paths | `osbx --thorough` |
 | `oreload` | Reload commands | `oreload` |
 
@@ -100,7 +97,6 @@ scripts/              # LLDB command modules
   objc_*.py           # Individual commands
   objc_core.py        # Pure Python (unit testable)
   objc_utils.py       # LLDB-dependent utilities
-  objc_llm.py         # LLM integration
 tools/
   osbx-standalone/    # Standalone sandbox scanner binary
 build.sh              # Build, test, release
@@ -112,9 +108,41 @@ examples/             # Example projects for testing
 docs/                 # Design documents and guides
 ```
 
+### Key Files
+
+- [scripts/objc_breakpoint.py](scripts/objc_breakpoint.py) - The `obrk` command implementation
+- [scripts/objc_dump.py](scripts/objc_dump.py) - The `odump` command for dumping NSData/memory to files
+- [scripts/objc_entitlements.py](scripts/objc_entitlements.py) - The `oentitlements` command for extracting process entitlements
+- [scripts/objc_keychain.py](scripts/objc_keychain.py) - The `okeychain` command for querying keychain items
+- [scripts/objc_pool.py](scripts/objc_pool.py) - The `opool` command for scanning autorelease pools
+- [scripts/objc_utils.py](scripts/objc_utils.py) - Utility functions for method resolution
+- [scripts/objc_core.py](scripts/objc_core.py) - Core parsing and formatting functions
+- [tests/test_obrk.py](tests/test_obrk.py) - Comprehensive test suite for breakpoint functionality
+- [tests/test_odump.py](tests/test_odump.py) - Test suite for odump command
+- [tests/test_oentitlements.py](tests/test_oentitlements.py) - Test suite for oentitlements command
+- [tests/test_okeychain.py](tests/test_okeychain.py) - Test suite for okeychain command
+- [tests/test_opool.py](tests/test_opool.py) - Test suite for opool command
+
+### Implementation Notes
+
+For detailed implementation patterns (LLDB expression evaluation, data extraction, etc.), see:
+- [docs/PITFALLS.md](docs/PITFALLS.md) - Common gotchas and workarounds
+- [docs/DEBUGGING.md](docs/DEBUGGING.md) - Debugging LLDB scripts
+- [docs/DESIGN.md](docs/DESIGN.md) - Architecture and design patterns
+
 ---
 
 ## Testing [READ IF: implementing features, fixing bugs]
+
+### Master Test Runner (Recommended)
+
+Run all test suites with a single shared LLDB session for maximum performance:
+
+```bash
+.venv/bin/python3 tests/run_all_tests.py
+```
+
+This runs all 17 test suites (~200+ tests) sharing one LLDB session, avoiding the 4-6s startup overhead per suite. Timing information is logged to `tests/.test_timings.log` (gitignored) in JSON format for performance analysis.
 
 ### Test Commands
 
@@ -124,6 +152,14 @@ docs/                 # Design documents and guides
 | `./build.sh test-quick` | Quick integration | ~30s |
 | `./build.sh test-int` | Full integration | ~2-3min |
 | `./build.sh test-all` | Unit + integration | ~3min |
+
+Individual test suites can also be run directly:
+
+```bash
+.venv/bin/python3 tests/test_obrk.py
+```
+
+Tests use shared LLDB sessions for performance. The HelloWorld examples in [examples/](examples/) are used as test targets.
 
 ### Test Workflow
 - **Before committing**: `pytest` + `./build.sh test-quick`
@@ -151,45 +187,6 @@ See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#adding-commands).
 See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#release-process).
 
 ---
-
-## Key Technical Details [READ IF: debugging or extending]
-
-### Resolution Chain (obrk)
-
-```
-NSClassFromString() → Class → NSSelectorFromString() → SEL
-→ [+methods] object_getClass() → MetaClass
-→ class_getMethodImplementation() → IMP
-→ ResolveLoadAddress() → SBAddress → BreakpointCreateBySBAddress()
-```
-
-Uses `SBAddress` to handle ASLR on all platforms.
-
-### Performance
-
-| Operation | Speed | Strategy |
-|-----------|-------|----------|
-| `EvaluateExpression()` | 10-50ms | Minimize |
-| `ReadMemory()` | <1ms | Maximize |
-| Batch class names | - | 35 per call |
-| Cached vs uncached | 0.01s vs 12s | Per-process cache |
-
-### UI Convention
-
-- Primary: normal text
-- Secondary: dim gray `\033[90m...\033[0m`
-
-For detailed pitfalls, see [docs/PITFALLS.md](docs/PITFALLS.md).
-
----
-
-## Installation
-
-```bash
-./install.py              # Install to ~/.lldb-objc
-./install.py --uninstall  # Remove installation
-./install.py --status     # Check status
-```
 
 ## Landing the Plane (Session Completion)
 

@@ -81,6 +81,66 @@ target.BreakpointCreateBySBAddress(sbaddr)
 
 Load addresses from runtime (e.g., `class_getMethodImplementation()`) are already ASLR-adjusted.
 
+### iOS System Binary Breakpoint Errors
+
+**Problem**: Setting breakpoints on iOS system binaries may fail with "error 9 sending breakpoint request" even when `b <addr>` works with the same address.
+
+**Root cause**: Going through `SBAddress` at all can cause issues with iOS shared cache binaries. The `class_getMethodImplementation()` runtime call returns a load address directly - use that raw address without intermediate transformations.
+
+**The fix**: Use the raw IMP address directly from `class_getMethodImplementation()`:
+
+```python
+# resolve_method_address now returns raw_imp_addr as the last element
+resolved_addr, class_ptr, sel_ptr, error, raw_imp_addr = resolve_method_address(...)
+load_addr = raw_imp_addr  # Use this directly, not resolved_addr.GetLoadAddress()
+```
+
+Use `HandleCommand` with `breakpoint set -a` to ensure exact CLI parity:
+
+```python
+cmd = f"breakpoint set -a 0x{load_addr:x} -N '{method_name}'"
+interpreter.HandleCommand(cmd, cmd_result)
+```
+
+**Debugging**: Use `obrk --verbose -[Class method]` or `obrk -v -[Class method]` to see detailed debug output including target/process state, raw IMP vs SBAddress comparison, module/section info, and the exact command being executed.
+
+See [IOS_BREAKPOINT_ERRORS_DESIGN.md](IOS_BREAKPOINT_ERRORS_DESIGN.md) for detailed analysis of code signing, hardware breakpoints, and environment-specific workarounds.
+
+### Data Extraction from ObjC Objects
+When extracting data from Objective-C objects in LLDB:
+
+```python
+# NSData - call runtime methods, then read memory
+bytes_ptr = evaluate_expression(frame, "[obj bytes]").GetValueAsUnsigned()
+length = evaluate_expression(frame, "[obj length]").GetValueAsUnsigned()
+data = process.ReadMemory(bytes_ptr, length, error)
+
+# NSDictionary - get keys array, iterate with GetChildAtIndex()
+keys = evaluate_expression(frame, "[dict allKeys]")
+for i in range(keys.GetNumChildren()):
+    key = keys.GetChildAtIndex(i)
+
+# NSString - use GetSummary() and strip outer quotes
+s = value.GetSummary()[1:-1]  # "hello" -> hello
+
+# NSNumber - GetValueAsUnsigned() returns pointer, use GetSummary()
+is_true = value.GetSummary() == "YES"  # for booleans
+
+# Always include fallback for robustness
+obj_desc = evaluate_expression(frame, f"[{addr} description]")
+
+# Limit iteration to prevent hangs
+MAX_ITEMS = 50
+for i in range(min(count, MAX_ITEMS)):
+    # ... process items
+```
+
+**Key points:**
+- Call runtime methods to get pointers/counts, then use `ReadMemory()` for bulk data
+- `GetSummary()` returns user-friendly strings for NSString, NSNumber, etc.
+- Always check validity and handle errors before dereferencing
+- Limit iterations to prevent infinite loops or timeouts
+
 ### API Validation
 Verify LLDB methods exist before using:
 

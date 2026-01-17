@@ -53,7 +53,6 @@ tests/
 ├── test_osel.py          # osel command tests
 ├── test_ocall.py         # ocall command tests
 ├── test_owatch.py        # owatch command tests
-├── test_oprotos.py       # oprotos command tests
 ├── test_hierarchy.py     # Class hierarchy display tests
 ├── test_ivars_props.py   # --ivars/--properties tests
 ├── test_osel_perf.py     # osel performance tests
@@ -148,7 +147,6 @@ cd examples/HelloWorld && xcodebuild
 | `osel` | `test_osel.py` | 18 | Selector finder |
 | `ocall` | `test_ocall.py` | 9 | Method caller |
 | `owatch` | `test_owatch.py` | 8 | Method watcher |
-| `oprotos` | `test_oprotos.py` | 8 | Protocol conformance |
 | `hierarchy` | `test_hierarchy.py` | 7 | Hierarchy display |
 | `ivars_props` | `test_ivars_props.py` | 13 | Ivars/properties |
 | `osbx` | `test_osbx.py` | - | Sandbox scanner (basic) |

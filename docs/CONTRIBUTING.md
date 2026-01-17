@@ -1,5 +1,12 @@
 # Contributing to lldb-objc
 
+## Code Style
+
+- Type hints for all function signatures
+- Docstrings for public functions
+- Guard against double initialization in `__lldb_init_module`
+- Use `from __future__ import annotations` for forward references
+
 ## Adding Commands
 
 1. Create `scripts/objc_<name>.py` with `__lldb_init_module()` printing one-line load message

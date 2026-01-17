@@ -97,12 +97,11 @@ def run_lldb_test(commands, scripts=None, timeout=30, load_private_framework=Tru
         Tuple of (stdout, stderr, return_code)
     """
     # Build command list using -o flags for reliable execution
-    cmd_args = ["lldb", "-b"]
+    # Use --no-lldbinit to prevent auto-loading scripts from ~/.lldbinit
+    cmd_args = ["lldb", "-b", "--no-lldbinit"]
 
-    # Add script imports (only if not already loaded by lldbinit)
+    # Add script imports
     if scripts:
-        # First, allow overwrites to handle lldbinit already loading these
-        cmd_args.extend(["-o", "settings set interpreter.require-overwrite false"])
         for script in scripts:
             script_path = os.path.join(PROJECT_ROOT, script)
 
@@ -302,7 +301,6 @@ class SharedLLDBSession:
         "objc_sel.py": "osel",
         "objc_call.py": "ocall",
         "objc_watch.py": "owatch",
-        "objc_protos.py": "oprotos",
         "objc_pool.py": "opool",
         "objc_instance.py": "oinstance",
         "objc_explain.py": "oexplain",
@@ -354,8 +352,8 @@ class SharedLLDBSession:
         env = os.environ.copy()
         env["TERM"] = "dumb"  # Disable terminal features
 
-        # Start LLDB in non-interactive style
-        self.child = pexpect.spawn("lldb", encoding="utf-8", timeout=self.default_timeout, env=env)
+        # Start LLDB in non-interactive style with --no-lldbinit to prevent auto-loading
+        self.child = pexpect.spawn("lldb --no-lldbinit", encoding="utf-8", timeout=self.default_timeout, env=env)
         self.child.setwinsize(200, 500)  # Set large window to avoid line wrapping
 
         # Wait for initial prompt
@@ -371,9 +369,6 @@ class SharedLLDBSession:
 
         # Send initialization commands
         init_commands = []
-
-        # Allow overwrites for scripts that may already be loaded
-        init_commands.append("settings set interpreter.require-overwrite false")
 
         # Import scripts
         for script in self.scripts:
@@ -557,7 +552,7 @@ class SharedLLDBSession:
 # =============================================================================
 
 
-def run_shared_test_suite(name, test_specs, scripts=None, show_category_summary=None, warmup_commands=None):
+def run_shared_test_suite(name, test_specs, scripts=None, show_category_summary=None, warmup_commands=None, session=None, suite_prefix=""):
     """
     Run a list of tests using a shared LLDB session with pytest-style output.
 
@@ -573,41 +568,56 @@ def run_shared_test_suite(name, test_specs, scripts=None, show_category_summary=
         scripts: List of script paths to import
         show_category_summary: Optional dict mapping category names to test index ranges
         warmup_commands: Optional list of commands to run before tests (e.g., cache warming)
+        session: Optional existing SharedLLDBSession to use (if None, creates a new one)
+        suite_prefix: Optional prefix for test names (e.g., "test_obrk.py::") when using external session
 
     Returns:
-        (passed_count, total_count)
+        (passed_count, total_count, suite_elapsed, results)
     """
     if not check_hello_world_binary():
-        return 0, len(test_specs)
+        return 0, len(test_specs), 0.0, []
 
     results = []
     suite_start_time = time.time()
 
-    # Print header in pytest style
-    print(f"{'=' * 70}")
-    print("test session starts")
-    print(f"platform darwin -- Python {'.'.join(map(str, __import__('sys').version_info[:3]))}")
-    print(f"collected {len(test_specs)} items\n")
+    # Only print header if we're managing our own session
+    if session is None:
+        print(f"{'=' * 70}")
+        print("test session starts")
+        print(f"platform darwin -- Python {'.'.join(map(str, __import__('sys').version_info[:3]))}")
+        print(f"collected {len(test_specs)} items\n")
 
-    with SharedLLDBSession(scripts=scripts) as session:
+    # Use provided session or create a new one
+    if session is not None:
+        session_to_use = session
+        close_session = False
+    else:
+        session_to_use = SharedLLDBSession(scripts=scripts)
+        close_session = True
+
+    try:
+        if close_session:
+            session_to_use.start()
         # Run warmup commands if provided (e.g., cache pre-warming)
         if warmup_commands:
             for cmd in warmup_commands:
-                session.run_command(cmd, timeout=120)  # Allow longer timeout for warmup
+                session_to_use.run_command(cmd, timeout=120)  # Allow longer timeout for warmup
 
         # Track failures for detailed output later
         failures = []
 
         for i, (test_name, commands, validator) in enumerate(test_specs, 1):
             test_start_time = time.time()
-            result = TestResult(test_name)
+            # Add suite prefix to test name if provided
+            full_test_name = f"{suite_prefix}{test_name}" if suite_prefix else test_name
+            result = TestResult(full_test_name)
 
             try:
                 # Clear breakpoints before each test to ensure clean state
-                session.clear_breakpoints()
+                session_to_use.clear_breakpoints()
 
                 # Run commands and collect output
-                output = session.run_commands(commands)
+                output = session_to_use.run_commands(commands)
 
                 # Check for command script errors
                 if output.startswith("ERROR: Command script failed"):
@@ -639,6 +649,10 @@ def run_shared_test_suite(name, test_specs, scripts=None, show_category_summary=
                 percentage = int(100 * i / len(test_specs))
                 print(f" [{percentage:3d}%]")
 
+    finally:
+        if close_session:
+            session_to_use.stop()
+
     suite_elapsed = time.time() - suite_start_time
 
     # Print failures section (pytest style)
@@ -662,26 +676,27 @@ def run_shared_test_suite(name, test_specs, scripts=None, show_category_summary=
                 if len(result.failure_detail) > 500:
                     print(f"  ... ({len(result.failure_detail) - 500} more characters)")
 
-    # Print summary line (pytest style)
+    # Print summary line (pytest style) only if we're managing our own session
     passed = sum(1 for r in results if r.passed)
     total = len(results)
     failed = total - passed
 
-    print(f"\n{'=' * 70}")
+    if session is None:
+        print(f"\n{'=' * 70}")
 
-    if failed == 0:
-        print(f"\033[92m{passed} passed\033[0m in {suite_elapsed:.2f}s")
-    else:
-        parts = []
-        if failed > 0:
-            parts.append(f"\033[91m{failed} failed\033[0m")
-        if passed > 0:
-            parts.append(f"\033[92m{passed} passed\033[0m")
-        print(f"{', '.join(parts)} in {suite_elapsed:.2f}s")
+        if failed == 0:
+            print(f"\033[92m{passed} passed\033[0m in {suite_elapsed:.2f}s")
+        else:
+            parts = []
+            if failed > 0:
+                parts.append(f"\033[91m{failed} failed\033[0m")
+            if passed > 0:
+                parts.append(f"\033[92m{passed} passed\033[0m")
+            print(f"{', '.join(parts)} in {suite_elapsed:.2f}s")
 
-    print(f"{'=' * 70}")
+        print(f"{'=' * 70}")
 
-    return passed, total
+    return passed, total, suite_elapsed, results
 
 
 # =============================================================================

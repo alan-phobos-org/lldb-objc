@@ -1,368 +1,236 @@
 #!/usr/bin/env python3
 """
-Unified test runner for lldb-objc project.
+Master test runner that runs all test suites with a single shared LLDB session.
 
-This script runs all implemented feature tests and provides a summary
-in pytest-style output format for suites of test suites.
+This dramatically improves performance by avoiding the overhead of starting
+a new LLDB process for each test file (typically 4-6s per spawn).
 
-Usage:
-    ./tests/run_all_tests.py              # Run all implemented feature tests
-    ./tests/run_all_tests.py --all        # Include future feature tests
-    ./tests/run_all_tests.py --quick      # Run quick tests only (skip slow ones)
-    ./tests/run_all_tests.py --verbose    # Show detailed output from each suite
-    ./tests/run_all_tests.py obrk ocls    # Run specific test suites
+Timing information is logged to tests/.test_timings.log (gitignored).
 """
 
-import subprocess
 import sys
 import os
+import importlib.util
 import time
-import argparse
-import re
+import json
+from datetime import datetime
 
-# Get the script directory and project root
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+# Add tests directory to path for imports
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(TESTS_DIR)
+sys.path.insert(0, TESTS_DIR)
 
-# Test suites for implemented features
-IMPLEMENTED_TESTS = [
-    ("obrk", "test_obrk.py", "Objective-C breakpoint command"),
-    ("ocls", "test_ocls.py", "Objective-C class finder"),
-    ("osel", "test_osel.py", "Objective-C selector finder"),
-    ("ocall", "test_ocall.py", "Objective-C method caller"),
-    ("owatch", "test_owatch.py", "Objective-C method watcher"),
-    ("opool", "test_opool.py", "Autorelease pool scanner"),
-    ("oinstance", "test_oinstance.py", "Object inspector"),
-    ("hierarchy", "test_hierarchy.py", "Class hierarchy display"),
-    ("ivars_props", "test_ivars_props.py", "Instance variables and properties"),
-    ("osel_perf", "test_osel_perf.py", "osel performance optimization"),
-]
+from test_helpers import (
+    SharedLLDBSession,
+    run_shared_test_suite,
+    check_hello_world_binary,
+)
 
-# SKIPPED TEST SUITES - TODO: Fix and re-enable
-# These are temporarily disabled due to slowness or false positives.
-# Backlog:
-#   - oprotos: Slow (~5min), output mixing with breakpoint cleanup commands
-#   - oexplain: Slow, requires external LLM API
-#   - odecompile: Slow, requires external LLM API
-SKIPPED_TESTS = [
-    ("oprotos", "test_oprotos.py", "Protocol conformance"),
-    ("oexplain", "test_oexplain.py", "LLM disassembly explainer"),
-    ("odecompile", "test_odecompile.py", "LLM decompiler"),
-]
-
-# Quick tests (subset of implemented tests that run fast)
-QUICK_TESTS = [
-    ("obrk", "test_obrk.py", "Objective-C breakpoint command"),
-    ("hierarchy", "test_hierarchy.py", "Class hierarchy display"),
-    ("ivars_props", "test_ivars_props.py", "Instance variables and properties"),
-]
-
-# Reserved for tests of features still in development
-FUTURE_TESTS = []
-
-# Performance/timing tests (optional)
-PERF_TESTS = [
-    ("timing", "test_timing.py", "Detailed timing measurements"),
+# Test files to run (in order)
+TEST_FILES = [
+    "test_obrk.py",
+    "test_ocls.py",
+    "test_osel.py",
+    "test_ocall.py",
+    "test_owatch.py",
+    "test_opool.py",
+    "test_oinstance.py",
+    "test_oexplain.py",
+    "test_odecompile.py",
+    "test_odump.py",
+    "test_oentitlements.py",
+    "test_okeychain.py",
+    "test_hierarchy.py",
+    "test_ivars_props.py",
+    "test_timing.py",
+    "test_osel_perf.py",
 ]
 
 
-def check_binary():
-    """Check if HelloWorld binary exists."""
-    hello_world_path = os.path.join(PROJECT_ROOT, "examples/HelloWorld/HelloWorld/HelloWorld")
-    if not os.path.exists(hello_world_path):
-        print("=" * 70)
-        print("SETUP ERROR")
-        print("=" * 70)
-        print("\nHelloWorld binary not found!")
-        print(f"  Expected: {hello_world_path}")
-        print("  Build with: cd examples/HelloWorld && xcodebuild\n")
-        return False
-    return True
+def load_test_module(test_file):
+    """Load a test module by file path."""
+    module_name = test_file.replace(".py", "")
+    file_path = os.path.join(TESTS_DIR, test_file)
+
+    spec = importlib.util.spec_from_file_location(module_name, file_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load test file: {test_file}")
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
-def run_test_suite(test_file, verbose=False):
+def collect_all_scripts():
     """
-    Run a single test suite and return results.
+    Collect all unique scripts needed by all test files.
 
-    Returns:
-        Tuple of (passed, total, elapsed_time, output, suite_failures)
-        where suite_failures is a list of detailed failure information
+    Since we load all scripts once, we take the union of all requirements.
+    Scripts that use "scripts" or "scripts/" load the entire package.
     """
-    test_path = os.path.join(SCRIPT_DIR, test_file)
+    # Just load the entire scripts directory to support all tests
+    return ["scripts"]
 
-    if not os.path.exists(test_path):
-        return None, None, 0, f"Test file not found: {test_file}", []
 
-    start_time = time.time()
-
-    try:
-        result = subprocess.run(
-            [sys.executable, test_path],
-            capture_output=True,
-            text=True,
-            timeout=600,  # 10 minute timeout per suite
-            cwd=PROJECT_ROOT,
-        )
-        elapsed = time.time() - start_time
-        output = result.stdout + result.stderr
-
-        # Parse results from output
-        # Look for pytest-style summary: "N passed in X.XXs" or "N failed, M passed in X.XXs"
-        passed = 0
-        total = 0
-
-        # Try to parse from summary line
-        summary_match = re.search(r"(\d+)\s+passed\s+in\s+[\d.]+s", output)
-        failed_match = re.search(r"(\d+)\s+failed(?:,\s+(\d+)\s+passed)?\s+in\s+[\d.]+s", output)
-
-        if failed_match:
-            failed = int(failed_match.group(1))
-            passed = int(failed_match.group(2)) if failed_match.group(2) else 0
-            total = failed + passed
-        elif summary_match:
-            passed = int(summary_match.group(1))
-            total = passed
-        else:
-            # Fallback: count dots and F's from progress line
-            progress_match = re.search(r"([.F]+)\s+\[\s*\d+%\]", output)
-            if progress_match:
-                progress = progress_match.group(1)
-                passed = progress.count(".")
-                total = len(progress)
-
-        # Extract failure details if present
-        failures = []
-        if total > passed:  # There are failures
-            # Extract the FAILURES section
-            failures_section = re.search(r"={70}\nFAILURES\n={70}(.*?)(?:={70}|\Z)", output, re.DOTALL)
-            if failures_section:
-                # Split by test separator lines
-                test_failures = re.split(r"_{70}\n", failures_section.group(1))
-                for failure in test_failures:
-                    failure = failure.strip()
-                    if failure:
-                        # Extract test name (first line) and details
-                        lines = failure.split("\n", 1)
-                        if len(lines) >= 2:
-                            test_name = lines[0].strip()
-                            details = lines[1].strip()
-                            failures.append({"name": test_name, "details": details})
-                        elif lines:
-                            failures.append({"name": lines[0].strip(), "details": ""})
-
-        return passed, total, elapsed, output, failures
-
-    except subprocess.TimeoutExpired:
-        elapsed = time.time() - start_time
-        return (
-            0,
-            1,
-            elapsed,
-            "TIMEOUT: Test suite exceeded 10 minute limit",
-            [{"name": "TIMEOUT", "details": "Test suite exceeded 10 minute limit"}],
-        )
-    except Exception as e:
-        elapsed = time.time() - start_time
-        return 0, 1, elapsed, f"ERROR: {str(e)}", [{"name": "ERROR", "details": str(e)}]
+def log_timing(log_file, data):
+    """Append timing data to the log file in JSON format."""
+    with open(log_file, "a") as f:
+        json.dump(data, f)
+        f.write("\n")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run lldb-objc test suites")
-    parser.add_argument("--all", action="store_true", help="Include future/unimplemented feature tests")
-    parser.add_argument("--quick", action="store_true", help="Run quick tests only")
-    parser.add_argument(
-        "--verbose",
-        "-v",
-        action="store_true",
-        help="Show detailed output from each test suite",
-    )
-    parser.add_argument("--perf", action="store_true", help="Include performance tests")
-    parser.add_argument("suites", nargs="*", help="Specific test suites to run (e.g., obrk ocls)")
-
-    args = parser.parse_args()
-
-    # Check for HelloWorld binary
-    if not check_binary():
+    """Run all test suites with a single shared LLDB session."""
+    if not check_hello_world_binary():
         sys.exit(1)
 
-    # Determine which tests to run
-    if args.suites:
-        # Run specific suites
-        all_tests = IMPLEMENTED_TESTS + FUTURE_TESTS + PERF_TESTS
-        tests_to_run = [(name, file, desc) for name, file, desc in all_tests if name in args.suites]
-        if not tests_to_run:
-            print(f"\nNo matching test suites: {args.suites}")
-            print(f"Available suites: {', '.join([t[0] for t in IMPLEMENTED_TESTS + FUTURE_TESTS + PERF_TESTS])}\n")
-            sys.exit(1)
-    elif args.quick:
-        tests_to_run = QUICK_TESTS
-    elif args.all:
-        tests_to_run = IMPLEMENTED_TESTS + FUTURE_TESTS
-    else:
-        tests_to_run = IMPLEMENTED_TESTS
+    # Set up timing log
+    log_file = os.path.join(TESTS_DIR, ".test_timings.log")
 
-    if args.perf and not args.suites:
-        tests_to_run = tests_to_run + PERF_TESTS
+    # Start timing
+    total_start_time = time.time()
+    run_timestamp = datetime.now().isoformat()
 
-    # Print pytest-style header
+    # Print header
     print("=" * 70)
-    print("test session starts")
-    print(f"platform darwin -- Python {'.'.join(map(str, sys.version_info[:3]))}")
-    print(f"collected {len(tests_to_run)} test suites\n")
+    print("MASTER TEST RUNNER - All suites with shared LLDB session")
+    print("=" * 70)
+    print(f"Timestamp: {run_timestamp}")
+    print(f"Platform: darwin -- Python {'.'.join(map(str, sys.version_info[:3]))}")
+    print(f"Test files: {len(TEST_FILES)}")
+    print(f"Timing log: {log_file}")
+    print()
 
-    # Run each test suite
-    suite_results = []
-    total_passed = 0
-    total_tests = 0
-    total_time = 0
-    failed_suites = []
+    # Collect all scripts
+    scripts = collect_all_scripts()
+    print(f"Loading scripts: {scripts}")
+    print()
 
-    overall_start = time.time()
+    # Track overall results
+    all_suite_results = []
+    total_tests_passed = 0
+    total_tests_run = 0
+    total_tests_failed = 0
 
-    for idx, (suite_name, test_file, description) in enumerate(tests_to_run, 1):
-        if args.verbose:
-            # In verbose mode, show the suite name and let it print its output
-            print(f"\n{'=' * 70}")
-            print(f"{suite_name} :: {description}")
-            print("=" * 70)
+    # Create single shared session for all test suites
+    session_start_time = time.time()
+    print("Starting shared LLDB session...")
 
-        passed, total, elapsed, output, failures = run_test_suite(test_file, args.verbose)
+    try:
+        with SharedLLDBSession(scripts=scripts) as session:
+            session_startup_time = time.time() - session_start_time
+            print(f"Session started in {session_startup_time:.2f}s\n")
 
-        if passed is None:
-            # Skipped test
-            if args.verbose:
-                print(f"\nSKIPPED: {output}")
-            else:
-                print("s", end="", flush=True)
-            suite_results.append(
-                {
-                    "name": suite_name,
-                    "status": "SKIPPED",
-                    "passed": 0,
-                    "total": 0,
-                    "elapsed": elapsed,
-                    "failures": [],
-                }
-            )
-        else:
-            if args.verbose:
-                # Print the actual suite output
-                print(output)
-            else:
-                # Pytest-style progress indicator
-                if passed == total and total > 0:
-                    print(".", end="", flush=True)
-                else:
-                    print("F", end="", flush=True)
-                    failed_suites.append(
-                        {
-                            "name": suite_name,
-                            "description": description,
-                            "passed": passed,
-                            "total": total,
-                            "elapsed": elapsed,
-                            "failures": failures,
-                            "output": output,
-                        }
+            # Run each test suite
+            for i, test_file in enumerate(TEST_FILES, 1):
+                suite_name = test_file.replace("test_", "").replace(".py", "")
+                print(f"[{i}/{len(TEST_FILES)}] Running {test_file}...")
+
+                try:
+                    # Load test module
+                    module = load_test_module(test_file)
+
+                    # Get test specs
+                    if not hasattr(module, "get_test_specs"):
+                        print(f"  ⚠️  Skipping {test_file}: no get_test_specs() function")
+                        continue
+
+                    test_specs = module.get_test_specs()
+
+                    # Run tests with shared session
+                    suite_start = time.time()
+                    passed, total, elapsed, results = run_shared_test_suite(
+                        name=f"{suite_name.upper()} TEST SUITE",
+                        test_specs=test_specs,
+                        session=session,  # Use shared session
+                        suite_prefix=f"{test_file}::",
                     )
+                    suite_end = time.time()
 
-            suite_results.append(
-                {
-                    "name": suite_name,
-                    "status": "PASS" if passed == total and total > 0 else "FAIL",
-                    "passed": passed,
-                    "total": total,
-                    "elapsed": elapsed,
-                    "failures": failures,
-                }
-            )
+                    # Track results
+                    failed = total - passed
+                    total_tests_passed += passed
+                    total_tests_run += total
+                    total_tests_failed += failed
 
-            total_passed += passed
-            total_tests += total
-            total_time += elapsed
+                    # Print suite summary
+                    if failed == 0:
+                        print(f"  ✅ {passed}/{total} passed in {elapsed:.2f}s")
+                    else:
+                        print(f"  ❌ {passed}/{total} passed, {failed} failed in {elapsed:.2f}s")
 
-        # Line break every 60 suites or at end
-        if not args.verbose and (idx % 60 == 0 or idx == len(tests_to_run)):
-            percentage = int(100 * idx / len(tests_to_run))
-            print(f" [{percentage:3d}%]")
+                    # Log timing data
+                    suite_data = {
+                        "timestamp": run_timestamp,
+                        "suite": test_file,
+                        "passed": passed,
+                        "total": total,
+                        "failed": failed,
+                        "elapsed": elapsed,
+                        "tests": [
+                            {
+                                "name": r.name,
+                                "passed": r.passed,
+                                "time": r.execution_time,
+                            }
+                            for r in results
+                        ],
+                    }
+                    all_suite_results.append(suite_data)
+                    log_timing(log_file, suite_data)
 
-    overall_elapsed = time.time() - overall_start
+                except Exception as e:
+                    print(f"  ⚠️  Error running {test_file}: {e}")
+                    import traceback
 
-    # Print failures section (pytest style) - only if not in verbose mode
-    if not args.verbose and failed_suites:
-        print(f"\n{'=' * 70}")
-        print("FAILURES")
-        print("=" * 70)
+                    traceback.print_exc()
 
-        for suite in failed_suites:
-            print(f"\n{'_' * 70}")
-            print(f"{suite['name']} :: {suite['description']}")
-            print(f"Result: {suite['passed']}/{suite['total']} passed ({suite['elapsed']:.2f}s)")
-            print("_" * 70)
+                print()
 
-            if suite["failures"]:
-                for failure in suite["failures"][:5]:  # Show first 5 failures
-                    print(f"\n  {failure['name']}")
-                    # Show first 300 chars of details
-                    details = failure["details"][:300]
-                    if details:
-                        # Indent the details
-                        for line in details.split("\n"):
-                            if line.strip():
-                                print(f"    {line}")
-                    if len(failure["details"]) > 300:
-                        print(f"    ... ({len(failure['details']) - 300} more characters)")
+    except Exception as e:
+        print(f"Fatal error with shared session: {e}")
+        import traceback
 
-                if len(suite["failures"]) > 5:
-                    print(f"\n  ... and {len(suite['failures']) - 5} more failures")
+        traceback.print_exc()
+        sys.exit(1)
 
-            # Show how to re-run this specific suite
-            suite_name = suite["name"]
-            if not suite_name.startswith("test_"):
-                suite_name = f"test_{suite_name}"
-            if not suite_name.endswith(".py"):
-                suite_name = f"{suite_name}.py"
-            print(f"\n  Re-run this suite: python3 tests/{suite_name}")
+    # Calculate total time
+    total_elapsed = time.time() - total_start_time
 
-    # Print summary section (pytest style)
-    print(f"\n{'=' * 70}")
-
-    suites_passed = sum(1 for r in suite_results if r["status"] == "PASS")
-    suites_failed = sum(1 for r in suite_results if r["status"] == "FAIL")
-    suites_skipped = sum(1 for r in suite_results if r["status"] == "SKIPPED")
-
-    if not args.verbose:
-        # Show suite-level summary
-        summary_parts = []
-        if suites_failed > 0:
-            summary_parts.append(f"\033[91m{suites_failed} failed\033[0m")
-        if suites_passed > 0:
-            summary_parts.append(f"\033[92m{suites_passed} passed\033[0m")
-        if suites_skipped > 0:
-            summary_parts.append(f"{suites_skipped} skipped")
-
-        print(f"{', '.join(summary_parts)} in {overall_elapsed:.2f}s")
-
-        # Show test-level summary underneath
-        if total_tests > 0:
-            test_summary_parts = []
-            failed_tests = total_tests - total_passed
-            if failed_tests > 0:
-                test_summary_parts.append(f"{failed_tests} failed")
-            if total_passed > 0:
-                test_summary_parts.append(f"{total_passed} passed")
-            print(f"({', '.join(test_summary_parts)} tests total)")
-    else:
-        # In verbose mode, just show overall summary
-        if suites_failed == 0:
-            print(f"\033[92mAll {suites_passed} suites passed\033[0m ({total_passed} tests) in {overall_elapsed:.2f}s")
-        else:
-            print(f"\033[91m{suites_failed} of {len(suite_results)} suites failed\033[0m in {overall_elapsed:.2f}s")
-
+    # Print overall summary
     print("=" * 70)
+    print("MASTER TEST RUNNER SUMMARY")
+    print("=" * 70)
+    print(f"Total tests run:    {total_tests_run}")
+    print(f"Total passed:       {total_tests_passed}")
+    print(f"Total failed:       {total_tests_failed}")
+    print(f"Session startup:    {session_startup_time:.2f}s")
+    print(f"Total time:         {total_elapsed:.2f}s")
+    print(f"Avg per test:       {total_elapsed/total_tests_run:.3f}s" if total_tests_run > 0 else "")
+    print()
 
-    # Exit with appropriate code
-    sys.exit(0 if suites_failed == 0 else 1)
+    # Log overall summary
+    summary_data = {
+        "timestamp": run_timestamp,
+        "suite": "__SUMMARY__",
+        "total_tests": total_tests_run,
+        "passed": total_tests_passed,
+        "failed": total_tests_failed,
+        "session_startup": session_startup_time,
+        "total_elapsed": total_elapsed,
+        "suites_run": len(all_suite_results),
+    }
+    log_timing(log_file, summary_data)
+
+    if total_tests_failed == 0:
+        print(f"\033[92m✅ All {total_tests_passed} tests passed!\033[0m")
+        print("=" * 70)
+        sys.exit(0)
+    else:
+        print(f"\033[91m❌ {total_tests_failed} tests failed\033[0m")
+        print("=" * 70)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

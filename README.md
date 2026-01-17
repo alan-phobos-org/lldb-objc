@@ -9,7 +9,6 @@ Custom LLDB commands for working with Objective-C methods, including private sym
 - **ocls**: Find and list Objective-C classes with wildcard pattern matching
 - **ocall**: Call Objective-C methods directly from LLDB
 - **owatch**: Set auto-logging breakpoints to watch method calls
-- **oprotos**: Find protocol conformance across all classes
 - **opool**: Find instances of Objective-C classes in autorelease pools
 - **oinstance**: Inspect Objective-C object instances with detailed ivar information
 - **odump**: Dump NSData contents or raw memory to a file
@@ -223,32 +222,6 @@ owatch --minimal -[UIViewController viewDidLoad]
 
 # Include stack traces
 owatch --stack +[NSUserDefaults standardUserDefaults]
-```
-
-### oprotos - Find Protocol Conformance
-
-Find which classes conform to a specific protocol.
-
-**Syntax:**
-```
-oprotos ProtocolName       # Find conforming classes
-oprotos --list [pattern]   # List available protocols
-```
-
-**Examples:**
-```
-# Find classes conforming to NSCoding
-oprotos NSCoding
-
-# Find NSCopying conformers
-oprotos NSCopying
-
-# List all protocols
-oprotos --list
-
-# List protocols matching pattern
-oprotos --list *Delegate
-oprotos --list NS*
 ```
 
 ### opool - Find Instances in Autorelease Pools
