@@ -23,3 +23,5 @@ Thumbs.db
 # Build artifacts
 dist/
 *.zip
+*.dSYM
+.test_timings.log
