@@ -19,6 +19,7 @@ Commands that feel like native debugger features, not bolted-on scripts. Output 
 | [docs/PITFALLS.md](docs/PITFALLS.md) | Technical gotchas | Debugging failures |
 | [docs/TESTING.md](docs/TESTING.md) | Test guide | Writing tests |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Optimization | Performance work |
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Adding commands, releasing | New features, releases |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes | Preparing releases |
 
 ## Quick Reference
@@ -130,32 +131,13 @@ docs/                 # Design documents and guides
 
 ## Adding Commands [READ IF: implementing new commands]
 
-1. Create `scripts/objc_<name>.py` with `__lldb_init_module()` printing one-line load message
-2. Add module name to `COMMAND_MODULES` list in `scripts/__init__.py`
-3. Add integration tests in `tests/test_<name>.py`
-4. Extract pure functions to `objc_core.py` and add unit tests
-5. Update command tables in this file and README.md
-6. Test with `oreload` in LLDB session
-7. Run `./build.sh check`
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#adding-commands).
 
 ---
 
 ## Release Process [READ IF: user explicitly requests release]
 
-```bash
-# 1. Run all checks
-./build.sh prepare-release
-
-# 2. Update CHANGELOG.md (add: ## [X.Y.Z] - YYYY-MM-DD)
-
-# 3. Review docs for completed TODOs
-
-# 4. Create release
-./build.sh release X.Y.Z
-
-# 5. Push
-git push origin main vX.Y.Z
-```
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#release-process).
 
 ---
 
