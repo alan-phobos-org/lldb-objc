@@ -76,7 +76,7 @@ def _extract_entitlements_csops(
     """
 
     if verbose:
-        print(f"[DEBUG] Evaluating csops expression...")
+        print("[DEBUG] Evaluating csops expression...")
 
     result = target.EvaluateExpression(expr)
 

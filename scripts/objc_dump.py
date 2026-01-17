@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import lldb
 import os
-import re
 import sys
 from typing import Any, Dict, Optional, Tuple
 
@@ -115,7 +114,7 @@ def _evaluate_expression(frame: lldb.SBFrame, expr: str) -> Tuple[Optional[int],
         # Check if it's actually nil or just evaluated to 0
         type_name = result.GetTypeName()
         if "nil" in str(result.GetValue()) or addr == 0:
-            return None, f"Expression evaluated to nil/NULL"
+            return None, "Expression evaluated to nil/NULL"
 
     return addr, None
 

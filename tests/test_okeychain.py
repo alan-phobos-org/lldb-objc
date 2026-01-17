@@ -14,9 +14,8 @@ Note: These tests may not find actual keychain items in a simple test binary,
 but they verify the command runs without errors.
 """
 
-import os
 import sys
-from test_helpers import run_shared_test_suite, Validators, PROJECT_ROOT
+from test_helpers import run_shared_test_suite
 
 
 # =============================================================================

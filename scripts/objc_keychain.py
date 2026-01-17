@@ -13,7 +13,6 @@ from __future__ import annotations
 import lldb
 import os
 import sys
-import json
 from typing import Any, Dict, List, Optional, Tuple
 
 # Add the script directory to path for imports

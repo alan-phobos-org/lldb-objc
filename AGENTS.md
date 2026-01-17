@@ -22,6 +22,17 @@ Commands that feel like native debugger features, not bolted-on scripts. Output 
 | [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Adding commands, releasing | New features, releases |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes | Preparing releases |
 
+## Development Environment
+
+**CRITICAL**: All development work MUST be done inside the `.venv` virtual environment.
+
+```bash
+source .venv/bin/activate  # Always activate first
+which python               # Should show .venv/bin/python
+```
+
+The venv includes all dependencies (pytest, pexpect, etc.). If you're not in the venv, commands and imports will fail.
+
 ## Quick Reference
 
 ### Build Commands

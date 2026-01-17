@@ -11,9 +11,8 @@ This script tests the oentitlements functionality:
 Uses a shared LLDB session for faster test execution.
 """
 
-import os
 import sys
-from test_helpers import run_shared_test_suite, Validators, PROJECT_ROOT
+from test_helpers import run_shared_test_suite
 
 
 # =============================================================================
