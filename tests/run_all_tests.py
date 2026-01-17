@@ -5,14 +5,15 @@ Master test runner that runs all test suites with a single shared LLDB session.
 This dramatically improves performance by avoiding the overhead of starting
 a new LLDB process for each test file (typically 4-6s per spawn).
 
-Timing information is logged to tests/.test_timings.log (gitignored).
+Timing information is logged to tests/.test_timings.log (gitignored) in a
+human-readable format with details by suite and individual test case.
+The log file is cleared on each run.
 """
 
 import sys
 import os
 import importlib.util
 import time
-import json
 from datetime import datetime
 
 # Add tests directory to path for imports
@@ -73,11 +74,59 @@ def collect_all_scripts():
     return ["scripts"]
 
 
-def log_timing(log_file, data):
-    """Append timing data to the log file in JSON format."""
-    with open(log_file, "a") as f:
-        json.dump(data, f)
+def init_timing_log(log_file, run_timestamp):
+    """Initialize timing log file (clear if exists) with header."""
+    with open(log_file, "w") as f:
+        f.write("=" * 80 + "\n")
+        f.write("TEST TIMING REPORT\n")
+        f.write("=" * 80 + "\n")
+        f.write(f"Run timestamp: {run_timestamp}\n")
+        f.write(f"Platform: darwin -- Python {'.'.join(map(str, sys.version_info[:3]))}\n")
         f.write("\n")
+
+
+def log_suite_timing(log_file, suite_data):
+    """Log timing data for a test suite in human-readable format."""
+    with open(log_file, "a") as f:
+        f.write("-" * 80 + "\n")
+        f.write(f"Suite: {suite_data['suite']}\n")
+        f.write("-" * 80 + "\n")
+        f.write(f"  Status:   {suite_data['passed']}/{suite_data['total']} passed")
+        if suite_data['failed'] > 0:
+            f.write(f", {suite_data['failed']} FAILED")
+        f.write("\n")
+        f.write(f"  Time:     {suite_data['elapsed']:.3f}s\n")
+        f.write(f"  Avg/test: {suite_data['elapsed'] / suite_data['total']:.3f}s\n")
+        f.write("\n")
+        f.write("  Test Cases:\n")
+
+        for test in suite_data['tests']:
+            status = "✓" if test['passed'] else "✗"
+            # Clean up test name (remove suite prefix)
+            name = test['name'].split("::", 1)[1] if "::" in test['name'] else test['name']
+            f.write(f"    {status} {name:<60} {test['time']:>8.3f}s\n")
+
+        f.write("\n")
+
+
+def log_summary(log_file, summary_data):
+    """Log overall test run summary."""
+    with open(log_file, "a") as f:
+        f.write("=" * 80 + "\n")
+        f.write("SUMMARY\n")
+        f.write("=" * 80 + "\n")
+        f.write(f"  Total tests:      {summary_data['total_tests']}\n")
+        f.write(f"  Passed:           {summary_data['passed']}\n")
+        f.write(f"  Failed:           {summary_data['failed']}\n")
+        f.write(f"  Suites run:       {summary_data['suites_run']}\n")
+        f.write("\n")
+        f.write(f"  Session startup:  {summary_data['session_startup']:.3f}s\n")
+        f.write(f"  Total time:       {summary_data['total_elapsed']:.3f}s\n")
+        if summary_data['total_tests'] > 0:
+            avg = summary_data['total_elapsed'] / summary_data['total_tests']
+            f.write(f"  Avg per test:     {avg:.3f}s\n")
+        f.write("\n")
+        f.write("=" * 80 + "\n")
 
 
 def main():
@@ -91,6 +140,9 @@ def main():
     # Start timing
     total_start_time = time.time()
     run_timestamp = datetime.now().isoformat()
+
+    # Initialize timing log (clears previous data)
+    init_timing_log(log_file, run_timestamp)
 
     # Print header
     print("=" * 70)
@@ -178,7 +230,7 @@ def main():
                         ],
                     }
                     all_suite_results.append(suite_data)
-                    log_timing(log_file, suite_data)
+                    log_suite_timing(log_file, suite_data)
 
                 except Exception as e:
                     print(f"  ⚠️  Error running {test_file}: {e}")
@@ -221,7 +273,7 @@ def main():
         "total_elapsed": total_elapsed,
         "suites_run": len(all_suite_results),
     }
-    log_timing(log_file, summary_data)
+    log_summary(log_file, summary_data)
 
     if total_tests_failed == 0:
         print(f"\033[92m✅ All {total_tests_passed} tests passed!\033[0m")
