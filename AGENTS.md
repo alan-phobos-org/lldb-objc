@@ -57,6 +57,7 @@ The venv includes all dependencies (pytest, pexpect, etc.). If you're not in the
 | `owatch` | Auto-log breakpoints | `owatch --minimal -[NSString init]` |
 | `opool` | Find in autorelease pools | `opool NSDate` |
 | `oinstance` | Inspect object | `oinstance $0` |
+| `oinstances` | Find class instances in memory | `oinstances NSString` |
 | `osbx` | Scan sandbox writable paths | `osbx --thorough` |
 | `oreload` | Reload commands | `oreload` |
 
@@ -117,6 +118,7 @@ docs/                 # Design documents and guides
 - [scripts/objc_entitlements.py](scripts/objc_entitlements.py) - The `oentitlements` command for extracting process entitlements
 - [scripts/objc_keychain.py](scripts/objc_keychain.py) - The `okeychain` command for querying keychain items
 - [scripts/objc_pool.py](scripts/objc_pool.py) - The `opool` command for scanning autorelease pools
+- [scripts/objc_instances.py](scripts/objc_instances.py) - The `oinstances` command for finding class instances in memory
 - [scripts/objc_utils.py](scripts/objc_utils.py) - Utility functions for method resolution
 - [scripts/objc_core.py](scripts/objc_core.py) - Core parsing and formatting functions
 - [tests/test_obrk.py](tests/test_obrk.py) - Comprehensive test suite for breakpoint functionality
@@ -124,6 +126,7 @@ docs/                 # Design documents and guides
 - [tests/test_oentitlements.py](tests/test_oentitlements.py) - Test suite for oentitlements command
 - [tests/test_okeychain.py](tests/test_okeychain.py) - Test suite for okeychain command
 - [tests/test_opool.py](tests/test_opool.py) - Test suite for opool command
+- [tests/test_oinstances.py](tests/test_oinstances.py) - Test suite for oinstances command
 
 ### Implementation Notes
 
@@ -149,7 +152,7 @@ Use `./build.sh test-unit` to verify changes are robust.
 
 **Fast re-testing workflow**: After fixing a specific command (e.g., `ocls`), use `./build.sh test-integration ocls` to run unit tests + just that command's integration suite.
 
-Available integration test commands: `obrk`, `ocall`, `ocls`, `odump`, `oentitlements`, `oinstance`, `okeychain`, `opool`, `osbx`, `osel`, `owatch`, `hierarchy`, `ivars_props`, `timing`
+Available integration test commands: `obrk`, `ocall`, `ocls`, `odump`, `oentitlements`, `oinstance`, `oinstances`, `okeychain`, `opool`, `osbx`, `osel`, `owatch`, `hierarchy`, `ivars_props`, `timing`
 
 Individual test suites can also be run directly:
 

@@ -39,6 +39,7 @@ COMMAND_MODULES = [
     ".objc_watch",
     ".objc_pool",
     ".objc_instance",
+    ".objc_instances",
     ".objc_sandbox",
     ".objc_dump",
     ".objc_entitlements",

@@ -63,8 +63,10 @@ TimingDict = Dict[str, Any]
 CacheEntry = Dict[str, Any]
 
 # Configurable batch size for selector name retrieval
-# Smaller than ocls because selector expressions are simpler
-DEFAULT_BATCH_SIZE = 50
+# OPTIMIZED: With helper function approach, can use larger batches
+# Helper function: ~100 selectors/batch (minimal parsing overhead)
+# Inline fallback: ~50 selectors/batch
+DEFAULT_BATCH_SIZE = 100
 
 # Global cache for selector lists
 # Structure: {process_id: {class_name: {'instance': [(sel_name, imp_addr, cat), ...],
@@ -366,10 +368,112 @@ def matches_pattern(selector_name: str, pattern: Optional[str]) -> bool:
         return pattern.lower() in selector_name.lower()
 
 
+def define_optimized_selector_helper(frame, batch_size: int = 100):
+    """
+    Define a reusable helper function for batching selector retrieval.
+
+    Similar to class batching optimization - define once, call many times.
+
+    Args:
+        frame: LLDB frame
+        batch_size: Maximum batch size (default 100)
+
+    Returns:
+        Tuple of (helper_function_ptr, batch_buffer_ptr)
+    """
+    from objc_utils import evaluate_expression
+    import struct
+
+    expr = f"""
+(void *)(^{{
+    typedef void* (*batch_get_sels_fn)(void**, unsigned int);
+    static batch_get_sels_fn s_h = 0;
+    static void **s_b = 0;
+
+    if (!s_h) {{
+        s_h = ^void*(void** mths, unsigned int n) {{
+            void **info = (void **)malloc(n * 2 * sizeof(void*));
+            if (!info) return (void *)0;
+
+            for (unsigned int i = 0; i < n; i++) {{
+                if (!mths[i]) {{
+                    info[i * 2] = (void *)0;
+                    info[i * 2 + 1] = (void *)0;
+                }} else {{
+                    info[i * 2] = (void *)sel_getName((SEL)method_getName(mths[i]));
+                    info[i * 2 + 1] = (void *)method_getImplementation(mths[i]);
+                }}
+            }}
+            return (void *)info;
+        }};
+    }}
+
+    if (!s_b) {{
+        s_b = (void **)malloc({batch_size} * sizeof(void *));
+    }}
+
+    static unsigned long long r[2];
+    r[0] = (unsigned long long)s_h;
+    r[1] = (unsigned long long)s_b;
+    return (void *)r;
+}}())
+"""
+
+    result = evaluate_expression(frame, expr, timeout_seconds=10.0)
+
+    if not result.IsValid() or result.GetError().Fail():
+        return 0, 0
+
+    result_ptr = result.GetValueAsUnsigned()
+    if result_ptr == 0:
+        return 0, 0
+
+    # Read the two pointers
+    process = frame.GetThread().GetProcess()
+    error = lldb.SBError()
+    result_bytes = process.ReadMemory(result_ptr, 16, error)
+
+    if not error.Success():
+        return 0, 0
+
+    helper_ptr, batch_buf_ptr = struct.unpack("QQ", result_bytes)
+    return helper_ptr, batch_buf_ptr
+
+
+def call_optimized_selector_helper(frame, helper_ptr: int, batch_buf_ptr: int, method_pointers):
+    """
+    Call the optimized selector helper with a batch of method pointers.
+
+    Args:
+        frame: LLDB frame
+        helper_ptr: Pointer to helper function
+        batch_buf_ptr: Pointer to reusable batch buffer
+        method_pointers: List of method pointers
+
+    Returns:
+        SBValue pointing to result buffer
+    """
+    from objc_utils import evaluate_expression
+
+    # Build compact expression
+    expr = f"(void *)(^{{\n    void **b=(void **)0x{batch_buf_ptr:x};\n"
+
+    for i, ptr in enumerate(method_pointers):
+        expr += f"    b[{i}]=0x{ptr:x};\n" if ptr != 0 else f"    b[{i}]=0;\n"
+
+    expr += f"    return ((void*(*)(void**,unsigned int))0x{helper_ptr:x})(b,{len(method_pointers)});\n"
+    expr += "}())"
+
+    return evaluate_expression(frame, expr, timeout_seconds=5.0)
+
+
 def build_selector_batch_expression(method_pointers: Tuple[int, ...]) -> str:
     """
     Build a compound expression that calls sel_getName(method_getName()) and
     method_getImplementation() for multiple methods.
+
+    DEPRECATED: Use define_optimized_selector_helper() and call_optimized_selector_helper()
+    for better performance.
 
     Args:
         method_pointers: List of method pointer addresses
@@ -509,18 +613,29 @@ def get_methods_optimized(
 
     method_pointers = struct.unpack(format_str, method_array_bytes)
 
-    # OPTIMIZATION: Batch the selector name and IMP retrieval
+    # OPTIMIZATION: Batch the selector name and IMP retrieval using helper function
     selectors = []  # List of (sel_name, imp_addr) tuples
-    batch_size = DEFAULT_BATCH_SIZE
+
+    # Try optimized approach first (100 selectors/batch), fallback to inline (50 selectors/batch)
+    optimized_batch_size = 100
+    helper_ptr, batch_buf_ptr = define_optimized_selector_helper(frame, optimized_batch_size)
+    timing["expression_count"] += 1
+
+    use_optimized = helper_ptr != 0 and batch_buf_ptr != 0
+    batch_size = optimized_batch_size if use_optimized else DEFAULT_BATCH_SIZE
 
     for batch_idx in range(0, len(method_pointers), batch_size):
         batch_end = min(batch_idx + batch_size, len(method_pointers))
         batch = method_pointers[batch_idx:batch_end]
         current_batch_size = len(batch)
 
-        # Build and execute batch expression
-        batch_expr = build_selector_batch_expression(batch)
-        batch_result = evaluate_expression(frame, batch_expr)
+        # Use optimized helper if available, otherwise fallback to inline
+        if use_optimized:
+            batch_result = call_optimized_selector_helper(frame, helper_ptr, batch_buf_ptr, batch)
+        else:
+            batch_expr = build_selector_batch_expression(batch)
+            batch_result = evaluate_expression(frame, batch_expr)
+
         timing["expression_count"] += 1
 
         if not batch_result.IsValid() or batch_result.GetError().Fail():

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`oinstances` command**: Efficiently find class instances in memory
+  - Scans heap memory for instances of specified class (including subclasses)
+  - Adapts heap.py's efficient C code generation for maximum performance
+  - Uses malloc zone introspection and binary search for speed
+  - Optional scanning modes: `--stack`, `--segments`, `--vm-regions`
+  - Limit control with `-M/--max-matches` flag
+  - Works on both macOS and iOS
+
 ### Changed
 - **Test Suite Optimization**: Dramatically improved test performance and maintainability
   - **test_ocls.py optimization**: 884 lines → 320 lines (64% reduction)

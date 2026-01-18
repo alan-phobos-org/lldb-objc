@@ -11,6 +11,7 @@ Custom LLDB commands for working with Objective-C methods, including private sym
 - **owatch**: Set auto-logging breakpoints to watch method calls
 - **opool**: Find instances of Objective-C classes in autorelease pools
 - **oinstance**: Inspect Objective-C object instances with detailed ivar information
+- **oinstances**: Efficiently scan memory for all instances of a class (heap, stack, segments)
 - **odump**: Dump NSData contents or raw memory to a file
 - **oentitlements**: Extract and display process entitlements in human-readable format
 - **okeychain**: Query and list keychain items accessible to the process
