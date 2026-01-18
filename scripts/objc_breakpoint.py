@@ -10,27 +10,18 @@ Usage: obrk -[ClassName selector:with:args:]
 from __future__ import annotations
 
 import lldb
-import os
 import re
-import sys
 from typing import Any, Dict, Tuple
 
-# Add the script directory to path for imports
-script_dir = os.path.dirname(os.path.abspath(__file__))
-if script_dir not in sys.path:
-    sys.path.insert(0, script_dir)
-
-try:
-    from version import __version__
-except ImportError:
-    __version__ = "unknown"
-
-# Guard against double initialization
-_initialized = False
-
 from objc_core import parse_method_signature, format_method_name
+from objc_utils import (
+    resolve_method_address,
+    detect_method_type,
+    register_command,
+    require_stopped_process,
+)
 
-from objc_utils import resolve_method_address, detect_method_type
+_initialized = False
 
 
 def _parse_args(command: str) -> Tuple[bool, str]:
@@ -70,21 +61,20 @@ def breakpoint_on_objc_method(
         )
         return
 
+    # Validate process state and get frame
+    stopped = require_stopped_process(debugger, result)
+    if not stopped:
+        return
+    frame, process = stopped
     target = debugger.GetSelectedTarget()
-    process = target.GetProcess()
 
     if verbose:
         print(f"[DEBUG] Target: {target}")
         print(f"[DEBUG] Process: {process}")
-        print(f"[DEBUG] Process state: {process.GetState() if process.IsValid() else 'invalid'}")
-
-    if not process.IsValid() or process.GetState() != lldb.eStateStopped:
-        result.SetError("Process must be running and stopped")
-        return
-
-    # Get the current frame to evaluate expressions
-    thread = process.GetSelectedThread()
-    frame = thread.GetSelectedFrame()
+        thread = process.GetSelectedThread()
+        print(f"[DEBUG] Thread: {thread}")
+        print(f"[DEBUG] Frame: {frame}")
+        print(f"[DEBUG] Frame PC: 0x{frame.GetPC():x}")
 
     if verbose:
         print(f"[DEBUG] Thread: {thread}")
@@ -193,6 +183,11 @@ def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any])
     if _initialized:
         return
     _initialized = True
-    module_path = f"{__name__}.breakpoint_on_objc_method"
-    debugger.HandleCommand(f'command script add -h "Set breakpoint on Objective-C method" -f {module_path} obrk')
-    print(f"[lldb-objc v{__version__}] 'obrk' installed - Set breakpoints on Objective-C methods")
+    register_command(
+        debugger,
+        "obrk",
+        "breakpoint_on_objc_method",
+        __name__,
+        "Set breakpoint on Objective-C method",
+        "Set breakpoints on Objective-C methods",
+    )

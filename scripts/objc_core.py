@@ -7,12 +7,47 @@ without any LLDB runtime. All functions are pure Python logic for:
 - String parsing and formatting
 - Pattern matching and filtering
 - Data structure manipulation
+- ANSI color constants for consistent terminal output
 """
 
 from __future__ import annotations
 
+import os
 import re
+import sys
 from typing import Optional, Tuple
+
+# -----------------------------------------------------------------------------
+# Version and Path Setup (shared across all modules)
+# -----------------------------------------------------------------------------
+
+# Add the script directory to path for imports (call once at module load)
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+if _script_dir not in sys.path:
+    sys.path.insert(0, _script_dir)
+
+try:
+    from version import __version__
+except ImportError:
+    __version__ = "unknown"
+
+
+def get_version() -> str:
+    """Return the package version string."""
+    return __version__
+
+
+# -----------------------------------------------------------------------------
+# ANSI Color Constants
+# -----------------------------------------------------------------------------
+# Consistent terminal styling across all modules
+
+ANSI_DIM = "\033[90m"
+ANSI_RESET = "\033[0m"
+ANSI_BOLD = "\033[1m"
+ANSI_RED = "\033[31m"
+ANSI_GREEN = "\033[32m"
+ANSI_YELLOW = "\033[33m"
 
 
 def unquote_string(s: Optional[str]) -> Optional[str]:

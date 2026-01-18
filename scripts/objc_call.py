@@ -17,25 +17,17 @@ Usage: ocall +[ClassName selector:]           # Class method
 from __future__ import annotations
 
 import lldb
-import os
-import sys
 from typing import Any, Dict
 
-# Add the script directory to path for version import
-script_dir = os.path.dirname(os.path.abspath(__file__))
-if script_dir not in sys.path:
-    sys.path.insert(0, script_dir)
+from objc_core import ANSI_DIM, ANSI_RESET
+from objc_utils import (
+    detect_method_type as _detect_method_type_base,
+    evaluate_expression as eval_expr,
+    register_command,
+    require_stopped_process,
+)
 
-try:
-    from version import __version__
-except ImportError:
-    __version__ = "unknown"
-
-# Guard against double initialization
 _initialized = False
-
-from objc_utils import detect_method_type as _detect_method_type_base
-from objc_utils import evaluate_expression as eval_expr
 
 
 def detect_method_type(frame: lldb.SBFrame, receiver: str, selector_with_args: str, verbose: bool = False) -> bool:
@@ -110,16 +102,10 @@ def call_objc_method(
     Call an Objective-C method and display the result.
     Supports both class methods and instance methods.
     """
-    target = debugger.GetSelectedTarget()
-    process = target.GetProcess()
-
-    if not process.IsValid() or process.GetState() != lldb.eStateStopped:
-        result.SetError("Process must be running and stopped")
+    stopped = require_stopped_process(debugger, result)
+    if not stopped:
         return
-
-    # Get the current frame for expression evaluation
-    thread = process.GetSelectedThread()
-    frame = thread.GetSelectedFrame()
+    frame, _ = stopped
 
     # Parse command for verbose flag
     command = command.strip()
@@ -404,9 +390,9 @@ def display_result(sbvalue: lldb.SBValue) -> None:
     # Get the address of the object
     address = sbvalue.GetValueAsUnsigned()
 
-    # Dim gray ANSI code for address
-    DIM = "\033[90m"
-    RESET = "\033[0m"
+    # Use shared ANSI constants
+    DIM = ANSI_DIM
+    RESET = ANSI_RESET
 
     # Get the type
     type_name = sbvalue.GetTypeName()
@@ -445,10 +431,11 @@ def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any])
     if _initialized:
         return
     _initialized = True
-    module_path = f"{__name__}.call_objc_method"
-    debugger.HandleCommand(
-        'command script add -h "Call Objective-C methods or evaluate expressions. '
-        'Usage: ocall +[ClassName selector:] or ocall -[$variable selector:] or ocall @\\"string\\" [--verbose]" '
-        f"-f {module_path} ocall"
+    register_command(
+        debugger,
+        "ocall",
+        "call_objc_method",
+        __name__,
+        "Call Objective-C methods or evaluate expressions",
+        "Call Objective-C methods and evaluate expressions",
     )
-    print(f"[lldb-objc v{__version__}] 'ocall' installed - Call Objective-C methods and evaluate expressions")

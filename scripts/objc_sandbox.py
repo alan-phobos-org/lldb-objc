@@ -46,33 +46,23 @@ from __future__ import annotations
 
 import fnmatch
 import json
-import os
 import re
-import sys
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-# Add the script directory to path for version import
-script_dir = os.path.dirname(os.path.abspath(__file__))
-if script_dir not in sys.path:
-    sys.path.insert(0, script_dir)
 
-try:
-    from version import __version__
-except ImportError:
-    __version__ = "unknown"
-
-# Guard against double initialization
 _initialized = False
 
 # Try to import lldb - may not be available during unit tests
 try:
     import lldb
-    from objc_utils import evaluate_expression
+    from objc_utils import evaluate_expression, register_command, require_stopped_process
 except ImportError:
     lldb = None
     evaluate_expression = None
+    register_command = None
+    require_stopped_process = None
 
 # Batch size for testing writability (consistent with ocls)
 DEFAULT_BATCH_SIZE = 35
@@ -934,12 +924,10 @@ def osbx_command(
         result.SetError("LLDB not available")
         return
 
-    target = debugger.GetSelectedTarget()
-    process = target.GetProcess()
-
-    if not process.IsValid() or process.GetState() != lldb.eStateStopped:
-        result.SetError("Process must be running and stopped")
+    stopped = require_stopped_process(debugger, result)
+    if not stopped:
         return
+    frame, process = stopped
 
     # Parse arguments
     args = command.strip().split()
@@ -1236,11 +1224,11 @@ def __lldb_init_module(debugger, internal_dict: Dict[str, Any]) -> None:
     if _initialized:
         return
     _initialized = True
-    module_path = f"{__name__}.osbx_command"
-    debugger.HandleCommand(
-        'command script add -h "Scan sandbox filesystem access. '
-        "Usage: osbx [--quick|-q] [--thorough|-t] [--verbose|-v] [--json] "
-        '[--filter PATTERN] [--output FILE] [--log FILE] [path_prefix]" '
-        f"-f {module_path} osbx"
+    register_command(
+        debugger,
+        "osbx",
+        "osbx_command",
+        __name__,
+        "Scan sandbox filesystem access",
+        "Scan sandbox writable paths",
     )
-    print(f"[lldb-objc v{__version__}] 'osbx' installed - Scan sandbox writable paths")

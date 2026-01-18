@@ -16,24 +16,12 @@ Adapted from LLDB's heap.py for optimal memory scanning efficiency.
 from __future__ import annotations
 
 import lldb
-import os
-import sys
 from typing import Any, Dict
 
-# Add the script directory to path for version import
-script_dir = os.path.dirname(os.path.abspath(__file__))
-if script_dir not in sys.path:
-    sys.path.insert(0, script_dir)
+from objc_core import ANSI_DIM, ANSI_RESET
+from objc_utils import evaluate_expression, register_command, require_stopped_process
 
-try:
-    from version import __version__
-except ImportError:
-    __version__ = "unknown"
-
-# Guard against double initialization
 _initialized = False
-
-from objc_utils import evaluate_expression
 
 
 def get_thread_stack_ranges_struct(process: lldb.SBProcess) -> str:
@@ -496,12 +484,10 @@ def find_instances_command(
 
     Usage: oinstances [options] <ClassName>
     """
-    target = debugger.GetSelectedTarget()
-    process = target.GetProcess()
-
-    if not process.IsValid() or process.GetState() != lldb.eStateStopped:
-        result.SetError("Process must be running and stopped")
+    stopped = require_stopped_process(debugger, result)
+    if not stopped:
         return
+    frame, process = stopped
 
     # Parse arguments
     args = command.strip().split() if command.strip() else []
@@ -568,10 +554,6 @@ def find_instances_command(
         )
         return
 
-    # Get current frame
-    thread = process.GetSelectedThread()
-    frame = thread.GetSelectedFrame()
-
     # Find instances
     instances = find_instances_in_memory(
         frame, class_name, max_matches, search_heap, search_stack, search_segments, search_vm_regions, verbose
@@ -585,7 +567,7 @@ def find_instances_command(
     # Display results
     for obj_addr, actual_class, description in instances:
         # Format: dimmed_address  class  description
-        addr_str = f"\033[90m0x{obj_addr:016x}\033[0m"
+        addr_str = f"{ANSI_DIM}0x{obj_addr:016x}{ANSI_RESET}"
 
         if description:
             print(f"{addr_str}  {actual_class}  {description}")
@@ -607,6 +589,11 @@ def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any])
     if _initialized:
         return
     _initialized = True
-    module_path = f"{__name__}.find_instances_command"
-    debugger.HandleCommand(f"command script add -f {module_path} oinstances")
-    print(f"[lldb-objc v{__version__}] 'oinstances' installed - Find class instances in memory")
+    register_command(
+        debugger,
+        "oinstances",
+        "find_instances_command",
+        __name__,
+        "Find class instances in memory",
+        "Find class instances in memory",
+    )

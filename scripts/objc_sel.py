@@ -31,32 +31,15 @@ Performance:
 from __future__ import annotations
 
 import lldb
-import os
 import re
 import struct
-import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-# Add the script directory to path for version import
-script_dir = os.path.dirname(os.path.abspath(__file__))
-if script_dir not in sys.path:
-    sys.path.insert(0, script_dir)
+from objc_core import unquote_string, extract_category_from_symbol, ANSI_DIM, ANSI_RESET
+from objc_utils import evaluate_expression, register_command, require_stopped_process
 
-try:
-    from version import __version__
-except ImportError:
-    __version__ = "unknown"
-
-# Guard against double initialization
 _initialized = False
-
-from objc_utils import evaluate_expression
-from objc_core import unquote_string, extract_category_from_symbol
-
-# ANSI color codes for consistent UI
-ANSI_DIM = "\033[90m"
-ANSI_RESET = "\033[0m"
 
 # Type aliases
 TimingDict = Dict[str, Any]
@@ -120,12 +103,10 @@ def find_objc_selectors(
         --instance: Show only instance methods
         --class: Show only class methods
     """
-    target = debugger.GetSelectedTarget()
-    process = target.GetProcess()
-
-    if not process.IsValid() or process.GetState() != lldb.eStateStopped:
-        result.SetError("Process must be running and stopped")
+    stopped = require_stopped_process(debugger, result)
+    if not stopped:
         return
+    frame, process = stopped
 
     # Parse the input: ClassName [--reload] [--clear-cache] [--verbose] [--instance] [--class] [pattern]
     args = command.strip().split()
@@ -175,10 +156,6 @@ def find_objc_selectors(
     print(f"Searching for selectors in class: {class_name}")
     if pattern:
         print(f"Filter pattern: {pattern}")
-
-    # Get the current frame to evaluate expressions
-    thread = process.GetSelectedThread()
-    frame = thread.GetSelectedFrame()
 
     # Initialize timing
     start_time = time.time()
@@ -729,10 +706,11 @@ def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any])
     if _initialized:
         return
     _initialized = True
-    module_path = f"{__name__}.find_objc_selectors"
-    debugger.HandleCommand(
-        'command script add -h "Find Objective-C selectors (methods) for a class. '
-        'Usage: osel ClassName [pattern]" '
-        f"-f {module_path} osel"
+    register_command(
+        debugger,
+        "osel",
+        "find_objc_selectors",
+        __name__,
+        "Find Objective-C selectors (methods) for a class",
+        "Find selectors/methods for classes",
     )
-    print(f"[lldb-objc v{__version__}] 'osel' installed - Find selectors/methods for classes")

@@ -6,6 +6,8 @@ This module provides LLDB-dependent functionality:
 - Method resolution (class, selector, IMP lookup via LLDB)
 - Runtime introspection using frame.EvaluateExpression()
 - Architecture-specific register access
+- Command registration helpers
+- Process/frame validation
 
 For pure Python utilities (parsing, formatting), see objc_core.py
 """
@@ -13,22 +15,164 @@ For pure Python utilities (parsing, formatting), see objc_core.py
 from __future__ import annotations
 
 import lldb
-import os
-import sys
 from typing import Optional, Tuple, List
 
-# Add the script directory to path for imports
-script_dir = os.path.dirname(os.path.abspath(__file__))
-if script_dir not in sys.path:
-    sys.path.insert(0, script_dir)
+# Import shared utilities from objc_core (which handles path setup)
+from objc_core import extract_inherited_class, get_version
 
-try:
-    from version import __version__
-except ImportError:
-    __version__ = "unknown"
+__version__ = get_version()
 
-# Import pure Python utilities from objc_core
-from objc_core import extract_inherited_class
+
+# -----------------------------------------------------------------------------
+# Command Registration Utilities
+# -----------------------------------------------------------------------------
+
+
+def register_command(
+    debugger: lldb.SBDebugger,
+    command_name: str,
+    function_name: str,
+    module_name: str,
+    help_text: str,
+    description: str,
+) -> None:
+    """
+    Register an LLDB command with consistent formatting.
+
+    Args:
+        debugger: The LLDB debugger instance
+        command_name: The command name (e.g., 'obrk')
+        function_name: The Python function name (e.g., 'breakpoint_on_objc_method')
+        module_name: The __name__ of the calling module
+        help_text: Short help text for the command
+        description: Description shown at install time
+    """
+    module_path = f"{module_name}.{function_name}"
+    debugger.HandleCommand(f'command script add -h "{help_text}" -f {module_path} {command_name}')
+    print(f"[lldb-objc v{__version__}] '{command_name}' installed - {description}")
+
+
+# -----------------------------------------------------------------------------
+# Process/Frame Validation Utilities
+# -----------------------------------------------------------------------------
+
+
+def get_stopped_frame(
+    debugger: lldb.SBDebugger,
+) -> Tuple[Optional[lldb.SBFrame], Optional[lldb.SBProcess], Optional[str]]:
+    """
+    Get the current frame from a stopped process.
+
+    This consolidates the common pattern of validating process state and
+    getting the current frame that appears in every command.
+
+    Args:
+        debugger: The LLDB debugger instance
+
+    Returns:
+        Tuple of (frame, process, error_message)
+        - On success: (valid_frame, valid_process, None)
+        - On error: (None, None, error_string)
+    """
+    target = debugger.GetSelectedTarget()
+    if not target.IsValid():
+        return None, None, "No target selected"
+
+    process = target.GetProcess()
+    if not process.IsValid():
+        return None, None, "No process running"
+
+    if process.GetState() != lldb.eStateStopped:
+        return None, None, "Process must be running and stopped"
+
+    thread = process.GetSelectedThread()
+    if not thread.IsValid():
+        return None, None, "No thread selected"
+
+    frame = thread.GetSelectedFrame()
+    if not frame.IsValid():
+        return None, None, "No frame selected"
+
+    return frame, process, None
+
+
+def require_stopped_process(
+    debugger: lldb.SBDebugger,
+    result: lldb.SBCommandReturnObject,
+) -> Optional[Tuple[lldb.SBFrame, lldb.SBProcess]]:
+    """
+    Validate process is stopped and return frame/process, or set error.
+
+    Convenience wrapper that handles the error case by setting result.SetError().
+
+    Args:
+        debugger: The LLDB debugger instance
+        result: The command result object for error reporting
+
+    Returns:
+        Tuple of (frame, process) on success, None on error (error already set)
+    """
+    frame, process, error = get_stopped_frame(debugger)
+    if error:
+        result.SetError(error)
+        return None
+    return frame, process
+
+
+# -----------------------------------------------------------------------------
+# Memory Reading Utilities
+# -----------------------------------------------------------------------------
+
+
+def read_cstring(
+    process: lldb.SBProcess,
+    addr: int,
+    max_length: int = 256,
+) -> Optional[str]:
+    """
+    Read a C string from process memory.
+
+    Args:
+        process: The LLDB process
+        addr: Memory address to read from
+        max_length: Maximum string length to read
+
+    Returns:
+        The string if successful, None on error
+    """
+    if addr == 0:
+        return None
+    error = lldb.SBError()
+    result = process.ReadCStringFromMemory(addr, max_length, error)
+    if error.Success() and result:
+        return result
+    return None
+
+
+def read_memory(
+    process: lldb.SBProcess,
+    addr: int,
+    size: int,
+) -> Optional[bytes]:
+    """
+    Read raw bytes from process memory.
+
+    Args:
+        process: The LLDB process
+        addr: Memory address to read from
+        size: Number of bytes to read
+
+    Returns:
+        Bytes if successful, None on error
+    """
+    if addr == 0 or size <= 0:
+        return None
+    error = lldb.SBError()
+    result = process.ReadMemory(addr, size, error)
+    if error.Success() and result:
+        return result
+    return None
+
 
 # -----------------------------------------------------------------------------
 # Expression Evaluation Optimization

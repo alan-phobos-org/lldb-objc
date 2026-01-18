@@ -11,21 +11,10 @@ Usage:
 from __future__ import annotations
 
 import lldb
-import os
-import sys
 from typing import Any, Dict, Optional, Tuple
 
-# Add the script directory to path for imports
-script_dir = os.path.dirname(os.path.abspath(__file__))
-if script_dir not in sys.path:
-    sys.path.insert(0, script_dir)
+from objc_utils import register_command, require_stopped_process
 
-try:
-    from version import __version__
-except ImportError:
-    __version__ = "unknown"
-
-# Guard against double initialization
 _initialized = False
 
 
@@ -182,16 +171,10 @@ def dump_memory(
         )
         return
 
-    target = debugger.GetSelectedTarget()
-    process = target.GetProcess()
-
-    if not process.IsValid() or process.GetState() != lldb.eStateStopped:
-        result.SetError("Process must be running and stopped")
+    stopped = require_stopped_process(debugger, result)
+    if not stopped:
         return
-
-    # Get the current frame
-    thread = process.GetSelectedThread()
-    frame = thread.GetSelectedFrame()
+    frame, _ = stopped
 
     # Evaluate the expression to get the address
     addr, error = _evaluate_expression(frame, expr)
@@ -240,6 +223,11 @@ def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any])
     if _initialized:
         return
     _initialized = True
-    module_path = f"{__name__}.dump_memory"
-    debugger.HandleCommand(f'command script add -h "Dump NSData or memory to file" -f {module_path} odump')
-    print(f"[lldb-objc v{__version__}] 'odump' installed - Dump NSData or memory to file")
+    register_command(
+        debugger,
+        "odump",
+        "dump_memory",
+        __name__,
+        "Dump NSData or memory to file",
+        "Dump NSData or memory to file",
+    )

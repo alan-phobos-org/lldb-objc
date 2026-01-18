@@ -53,12 +53,13 @@ Output modes (based on number of matches):
 from __future__ import annotations
 
 import lldb
-import os
 import re
 import struct
-import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
+
+from objc_core import unquote_string
+from objc_utils import evaluate_expression, get_expression_options, register_command, require_stopped_process
 
 # Configurable batch size for class_getName() batching
 # OPTIMIZED: With helper function approach, we can use much larger batches
@@ -67,21 +68,7 @@ from typing import Any, Dict, List, Optional, Tuple
 # Use --batch-size=N flag to override, or set this default
 DEFAULT_BATCH_SIZE = 100
 
-# Add the script directory to path for version import
-script_dir = os.path.dirname(os.path.abspath(__file__))
-if script_dir not in sys.path:
-    sys.path.insert(0, script_dir)
-
-try:
-    from version import __version__
-except ImportError:
-    __version__ = "unknown"
-
-# Guard against double initialization
 _initialized = False
-
-from objc_core import unquote_string
-from objc_utils import evaluate_expression, get_expression_options
 
 # Type aliases
 TimingDict = Dict[str, Any]
@@ -112,12 +99,10 @@ def find_objc_classes(
         --dylib <pattern>: Filter to classes from dylibs matching pattern (supports wildcards)
         --experiment: Use experimental image-based monolithic enumeration approach
     """
-    target = debugger.GetSelectedTarget()
-    process = target.GetProcess()
-
-    if not process.IsValid() or process.GetState() != lldb.eStateStopped:
-        result.SetError("Process must be running and stopped")
+    stopped = require_stopped_process(debugger, result)
+    if not stopped:
         return
+    frame, process = stopped
 
     # Parse input: [--reload] [--clear-cache] [--batch-size=N] [--verbose]
     # [--ivars] [--properties] [--dylib pattern] [--experiment] [pattern]
@@ -2409,10 +2394,11 @@ def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any])
     if _initialized:
         return
     _initialized = True
-    module_path = f"{__name__}.find_objc_classes"
-    debugger.HandleCommand(
-        'command script add -h "Find Objective-C classes. '
-        'Usage: ocls [pattern] [--reload] [--clear-cache] [--verbose]" '
-        f"-f {module_path} ocls"
+    register_command(
+        debugger,
+        "ocls",
+        "find_objc_classes",
+        __name__,
+        "Find Objective-C classes",
+        "Find Objective-C classes by pattern",
     )
-    print(f"[lldb-objc v{__version__}] 'ocls' installed - Find Objective-C classes by pattern")

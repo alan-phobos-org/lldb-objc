@@ -15,25 +15,13 @@ This command provides detailed inspection of an object including:
 from __future__ import annotations
 
 import lldb
-import os
-import sys
 import struct
 from typing import Any, Dict, List, Tuple
 
-# Add the script directory to path for version import
-script_dir = os.path.dirname(os.path.abspath(__file__))
-if script_dir not in sys.path:
-    sys.path.insert(0, script_dir)
+from objc_core import ANSI_DIM, ANSI_RESET
+from objc_utils import evaluate_expression, register_command, require_stopped_process
 
-try:
-    from version import __version__
-except ImportError:
-    __version__ = "unknown"
-
-# Guard against double initialization
 _initialized = False
-
-from objc_utils import evaluate_expression
 
 # Import helper functions from objc_cls
 try:
@@ -270,7 +258,7 @@ def format_object_inspection(
         lines.append("")
         lines.append("  Class Hierarchy:")
         hierarchy_str = " → ".join(hierarchy[1:])
-        lines.append(f"    {hierarchy[0]} \033[90m→ {hierarchy_str}\033[0m")
+        lines.append(f"    {hierarchy[0]} {ANSI_DIM}→ {hierarchy_str}{ANSI_RESET}")
 
     # Instance variables with values
     if ivar_values:
@@ -283,14 +271,14 @@ def format_object_inspection(
 
             # Format line
             # offset (dim) + name (normal) + address (hex) + description + (type in dim)
-            offset_str = f"\033[90m0x{offset:03x}\033[0m"
+            offset_str = f"{ANSI_DIM}0x{offset:03x}{ANSI_RESET}"
             addr_str = f"0x{value_addr:016x}"
 
             if value_desc:
                 # Value description already includes type info
                 lines.append(f"    {offset_str}  {name:20s}  {addr_str}  {value_desc}")
             else:
-                type_part = f"\033[90m{type_str}\033[0m"
+                type_part = f"{ANSI_DIM}{type_str}{ANSI_RESET}"
                 lines.append(f"    {offset_str}  {name:20s}  {addr_str}  {type_part}")
     else:
         lines.append("")
@@ -385,12 +373,10 @@ def inspect_instance_command(
 
     Usage: oinstance <address|$var|expression>
     """
-    target = debugger.GetSelectedTarget()
-    process = target.GetProcess()
-
-    if not process.IsValid() or process.GetState() != lldb.eStateStopped:
-        result.SetError("Process must be running and stopped")
+    stopped = require_stopped_process(debugger, result)
+    if not stopped:
         return
+    frame, process = stopped
 
     # Parse arguments
     obj_input = command.strip()
@@ -398,10 +384,6 @@ def inspect_instance_command(
     if not obj_input:
         result.SetError("Usage: oinstance <address|$var|expression>")
         return
-
-    # Get current frame
-    thread = process.GetSelectedThread()
-    frame = thread.GetSelectedFrame()
 
     # Inspect the object
     output = inspect_object(frame, obj_input)
@@ -415,6 +397,11 @@ def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any])
     if _initialized:
         return
     _initialized = True
-    module_path = f"{__name__}.inspect_instance_command"
-    debugger.HandleCommand(f"command script add -f {module_path} oinstance")
-    print(f"[lldb-objc v{__version__}] 'oinstance' installed - Inspect Objective-C object instances")
+    register_command(
+        debugger,
+        "oinstance",
+        "inspect_instance_command",
+        __name__,
+        "Inspect Objective-C object instance",
+        "Inspect Objective-C object instances",
+    )

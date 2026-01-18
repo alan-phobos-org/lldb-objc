@@ -16,25 +16,13 @@ Use --verbose to show the raw pool contents from _objc_autoreleasePoolPrint().
 from __future__ import annotations
 
 import lldb
-import os
-import sys
 import re
 from typing import Any, Dict, List, Tuple
 
-# Add the script directory to path for version import
-script_dir = os.path.dirname(os.path.abspath(__file__))
-if script_dir not in sys.path:
-    sys.path.insert(0, script_dir)
+from objc_core import ANSI_DIM, ANSI_RESET
+from objc_utils import evaluate_expression, register_command, require_stopped_process
 
-try:
-    from version import __version__
-except ImportError:
-    __version__ = "unknown"
-
-# Guard against double initialization
 _initialized = False
-
-from objc_utils import evaluate_expression
 
 
 def find_in_autorelease_pool(
@@ -190,12 +178,10 @@ def find_pool_instances_command(
 
     Usage: opool [--verbose] [ClassName]
     """
-    target = debugger.GetSelectedTarget()
-    process = target.GetProcess()
-
-    if not process.IsValid() or process.GetState() != lldb.eStateStopped:
-        result.SetError("Process must be running and stopped")
+    stopped = require_stopped_process(debugger, result)
+    if not stopped:
         return
+    frame, process = stopped
 
     # Parse arguments
     args = command.strip().split() if command.strip() else []
@@ -208,10 +194,6 @@ def find_pool_instances_command(
 
     # Get class name (optional)
     class_name = args[0] if args else None
-
-    # Get current frame
-    thread = process.GetSelectedThread()
-    frame = thread.GetSelectedFrame()
 
     # Find instances in autorelease pools
     instances, pool_output = find_in_autorelease_pool(frame, class_name, verbose)
@@ -248,7 +230,7 @@ def find_pool_instances_command(
             description = description[:97] + "..."
 
         # Dim address (gray), then actual class, then description
-        print(f"\033[90m0x{addr:016x}\033[0m  {actual_class}  {description}")
+        print(f"{ANSI_DIM}0x{addr:016x}{ANSI_RESET}  {actual_class}  {description}")
 
     result.SetStatus(lldb.eReturnStatusSuccessFinishResult)
 
@@ -259,6 +241,11 @@ def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any])
     if _initialized:
         return
     _initialized = True
-    module_path = f"{__name__}.find_pool_instances_command"
-    debugger.HandleCommand(f"command script add -f {module_path} opool")
-    print(f"[lldb-objc v{__version__}] 'opool' installed - Find instances in autorelease pools")
+    register_command(
+        debugger,
+        "opool",
+        "find_pool_instances_command",
+        __name__,
+        "Find instances in autorelease pools",
+        "Find instances in autorelease pools",
+    )

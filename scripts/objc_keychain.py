@@ -13,23 +13,12 @@ Usage:
 from __future__ import annotations
 
 import lldb
-import os
 import plistlib
-import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-# Add the script directory to path for imports
-script_dir = os.path.dirname(os.path.abspath(__file__))
-if script_dir not in sys.path:
-    sys.path.insert(0, script_dir)
+from objc_utils import register_command, require_stopped_process
 
-try:
-    from version import __version__
-except ImportError:
-    __version__ = "unknown"
-
-# Guard against double initialization
 _initialized = False
 
 # Keychain class constants
@@ -510,12 +499,11 @@ def list_keychain_items(
         # Get the filter value (up to next space or end)
         filter_query = rest.split()[0] if rest else None
 
-    target = debugger.GetSelectedTarget()
-    process = target.GetProcess()
-
-    if not process.IsValid() or process.GetState() != lldb.eStateStopped:
-        result.SetError("Process must be running and stopped")
+    stopped = require_stopped_process(debugger, result)
+    if not stopped:
         return
+    frame, process = stopped
+    target = debugger.GetSelectedTarget()
 
     # Use the optimized fast query path
     plist_bytes, error = _query_all_keychain_items_fast(target, verbose)
@@ -744,12 +732,11 @@ def extract_keychain_items(
 
     output_file = args[0]
 
-    target = debugger.GetSelectedTarget()
-    process = target.GetProcess()
-
-    if not process.IsValid() or process.GetState() != lldb.eStateStopped:
-        result.SetError("Process must be running and stopped")
+    stopped = require_stopped_process(debugger, result)
+    if not stopped:
         return
+    frame, process = stopped
+    target = debugger.GetSelectedTarget()
 
     # Use the optimized fast query path
     plist_bytes, error = _query_all_keychain_items_fast(target, verbose)
@@ -893,8 +880,11 @@ def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any])
     if _initialized:
         return
     _initialized = True
-    module_path = f"{__name__}.okeychain_main"
-    debugger.HandleCommand(
-        f'command script add -h "Query keychain items accessible to the process" -f {module_path} okeychain'
+    register_command(
+        debugger,
+        "okeychain",
+        "okeychain_main",
+        __name__,
+        "Query keychain items accessible to the process",
+        "Query keychain items",
     )
-    print(f"[lldb-objc v{__version__}] 'okeychain' installed - Query keychain items")

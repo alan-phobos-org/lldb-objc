@@ -27,33 +27,14 @@ Examples:
 from __future__ import annotations
 
 import lldb
-import os
 import shlex
-import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-# Add the script directory to path for imports
-script_dir = os.path.dirname(os.path.abspath(__file__))
-if script_dir not in sys.path:
-    sys.path.insert(0, script_dir)
+from objc_core import parse_method_signature, format_method_name, ANSI_DIM, ANSI_RESET
+from objc_utils import resolve_method_address, get_arch_registers, register_command, require_stopped_process
 
-try:
-    from version import __version__
-except ImportError:
-    __version__ = "unknown"
-
-# Guard against double initialization
 _initialized = False
-
-from objc_utils import (
-    resolve_method_address,
-    get_arch_registers,
-)
-from objc_core import (
-    parse_method_signature,
-    format_method_name,
-)
 
 # Type aliases for clarity
 WatchInfo = Dict[str, Any]
@@ -212,39 +193,39 @@ def watch_callback(
 
     if is_minimal:
         # Minimal: timestamp + method name + optional caller
-        output = f"\033[90m{timestamp}\033[0m {method_name}"
+        output = f"{ANSI_DIM}{timestamp}{ANSI_RESET} {method_name}"
         if caller:
-            output += f" \033[90m<- {caller}\033[0m"
+            output += f" {ANSI_DIM}<- {caller}{ANSI_RESET}"
         print(output)
     elif is_detailed:
         # Detailed: multi-line format
-        print(f"\033[90m{timestamp}\033[0m {method_name}")
+        print(f"{ANSI_DIM}{timestamp}{ANSI_RESET} {method_name}")
 
         self_val = format_register_value(frame, self_reg, process)
         if self_val:
-            print(f"  \033[90mself:\033[0m {self_val}")
+            print(f"  {ANSI_DIM}self:{ANSI_RESET} {self_val}")
 
         cmd_val = format_register_value(frame, cmd_reg, process)
         if cmd_val:
-            print(f"  \033[90m_cmd:\033[0m {cmd_val}")
+            print(f"  {ANSI_DIM}_cmd:{ANSI_RESET} {cmd_val}")
 
         for i, val in enumerate(_get_arg_values(frame, process, arg_regs, arg_count)):
-            print(f"  \033[90marg{i}:\033[0m {val}")
+            print(f"  {ANSI_DIM}arg{i}:{ANSI_RESET} {val}")
 
         if caller:
-            print(f"  \033[90mcaller:\033[0m {caller}")
+            print(f"  {ANSI_DIM}caller:{ANSI_RESET} {caller}")
     else:
         # Default: one line with addresses
         self_val = format_register_value(frame, self_reg, process)
         args = _get_arg_values(frame, process, arg_regs, arg_count)
 
-        output = f"\033[90m{timestamp}\033[0m {method_name}"
+        output = f"{ANSI_DIM}{timestamp}{ANSI_RESET} {method_name}"
         if self_val:
-            output += f" \033[90m{self_val}\033[0m"
+            output += f" {ANSI_DIM}{self_val}{ANSI_RESET}"
         if args:
             output += " " + " ".join(args)
         if caller:
-            output += f" \033[90m<- {caller}\033[0m"
+            output += f" {ANSI_DIM}<- {caller}{ANSI_RESET}"
 
         print(output)
 
@@ -253,7 +234,7 @@ def watch_callback(
         target = process.GetTarget()
         target.BreakpointDelete(bp_id)
         del active_watches[bp_id]
-        print(f"\033[90m[owatch: removed after {hit_count} hit(s)]\033[0m")
+        print(f"{ANSI_DIM}[owatch: removed after {hit_count} hit(s)]{ANSI_RESET}")
 
     return False
 
@@ -353,12 +334,11 @@ def watch_objc_method(
     Set an auto-logging breakpoint on an Objective-C method.
     Logs method calls without stopping execution.
     """
-    target = debugger.GetSelectedTarget()
-    process = target.GetProcess()
-
-    if not process.IsValid() or process.GetState() != lldb.eStateStopped:
-        result.SetError("Process must be running and stopped")
+    stopped = require_stopped_process(debugger, result)
+    if not stopped:
         return
+    frame, process = stopped
+    target = debugger.GetSelectedTarget()
 
     # Parse command with proper quote handling
     args, error = _parse_command_args(command)
@@ -393,10 +373,6 @@ def watch_objc_method(
     if error:
         result.SetError(error)
         return
-
-    # Get the current frame
-    thread = process.GetSelectedThread()
-    frame = thread.GetSelectedFrame()
 
     # Resolve the method address
     method_name = format_method_name(class_name, selector, is_instance_method)
@@ -462,11 +438,11 @@ return objc_watch.watch_callback(frame, bp_loc, extra_args, internal_dict)
 
     # Print confirmation
     print(f"Watching {method_name}")
-    print(f"  \033[90mBreakpoint #{bp_id} at 0x{imp_addr:x}\033[0m")
+    print(f"  {ANSI_DIM}Breakpoint #{bp_id} at 0x{imp_addr:x}{ANSI_RESET}")
 
     flags_desc = _build_flags_description(active_watches[bp_id])
     if flags_desc:
-        print(f"  \033[90mFlags: {', '.join(flags_desc)}\033[0m")
+        print(f"  {ANSI_DIM}Flags: {', '.join(flags_desc)}{ANSI_RESET}")
 
     result.SetStatus(lldb.eReturnStatusSuccessFinishResult)
 
@@ -486,8 +462,8 @@ def list_watches(process: lldb.SBProcess, result: lldb.SBCommandReturnObject) ->
         hit_count = info.get("hit_count", 0)
 
         flags = _build_flags_description(info)
-        flags_str = f" \033[90m({', '.join(flags)})\033[0m" if flags else ""
-        hits_str = f" \033[90m[{hit_count} hit(s)]\033[0m"
+        flags_str = f" {ANSI_DIM}({', '.join(flags)}){ANSI_RESET}" if flags else ""
+        hits_str = f" {ANSI_DIM}[{hit_count} hit(s)]{ANSI_RESET}"
 
         print(f"  #{bp_id}: {method_name}{flags_str}{hits_str}")
 
@@ -521,8 +497,11 @@ def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict: Dict[str, Any])
     if _initialized:
         return
     _initialized = True
-    module_path = f"{__name__}.watch_objc_method"
-    debugger.HandleCommand(
-        f'command script add -h "Watch Objective-C methods with auto-logging breakpoints" -f {module_path} owatch'
+    register_command(
+        debugger,
+        "owatch",
+        "watch_objc_method",
+        __name__,
+        "Watch Objective-C methods with auto-logging breakpoints",
+        "Auto-logging breakpoints for method watching",
     )
-    print(f"[lldb-objc v{__version__}] 'owatch' installed - Auto-logging breakpoints for method watching")
