@@ -16,6 +16,14 @@ The `oinstances` command efficiently scans memory for class instances using heap
 
 ### v1.5 
 
+Bugs:
+
+* owatch shouldn't need - on selectors
+* owatch `NameError: name 'extra_args' is not defined`
+
+Feat:
+
 * Make HelloWorld binaries more representative to test opool and oinstances a bit better
 * Build test-smoke set up for testing against iPhone
 * Re-optimise ocls - lots of experiments needed and probably 2/3 strategies to try on real-world examples (need test iPhone)
+* ocls --selectors to list all and where from
