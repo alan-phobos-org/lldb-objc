@@ -6,14 +6,36 @@ Usage:
     okeychain list              # List all accessible keychain items
     okeychain list --filter=<query>  # Filter by access group or account
     okeychain list --verbose    # Show detailed debug info
+    okeychain list --keychain=<path>  # Use specific keychain file
     okeychain extract <file>    # Extract all keychain items to XML plist file
     okeychain extract <file> --filter=<query>  # Extract filtered items
+    okeychain extract <file> --raw  # Extract plist and raw data files
+    okeychain extract <file> --keychain=<path>  # Use specific keychain file
+
+Note:
+    This tool automatically detects and opens process-specific keychain files
+    located at /Library/Keychains/<process_name>.keychain (e.g., apsd.keychain).
+    For iOS or remote debugging, use --keychain=<path> to manually specify the
+    keychain file path (e.g., --keychain=/private/var/Keychains/keychain-2.db).
+
+    It uses SecKeychainOpen and kSecMatchSearchList to access these keychains,
+    mirroring how the actual binaries access their own keychain data.
+
+    Keychain authorization prompts are suppressed to prevent SIGSTOP interrupts
+    during debugging. Only items accessible without user authentication will be
+    returned. This is expected behavior when debugging system processes.
+
+    If no items are found, check the process entitlements with 'oentitlements'
+    to verify keychain-access-groups and application-identifier.
 """
 
 from __future__ import annotations
 
 import lldb
+import os
 import plistlib
+import subprocess
+import tempfile
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -29,6 +51,190 @@ KEYCHAIN_CLASSES = {
     "kSecClassKey": "keys",
     "kSecClassIdentity": "idnt",
 }
+
+
+def _parse_x509_dn(der_bytes: bytes) -> Optional[str]:
+    """
+    Parse a DER-encoded X.509 Distinguished Name into human-readable format.
+
+    Returns: String like "C=US, O=Apple Inc., CN=Device CA" or None if parsing fails
+    """
+    if not der_bytes:
+        return None
+
+    result = []
+    i = 0
+
+    # OID to attribute name mapping
+    oid_map = {
+        bytes([0x55, 0x04, 0x03]): "CN",  # commonName
+        bytes([0x55, 0x04, 0x06]): "C",  # countryName
+        bytes([0x55, 0x04, 0x07]): "L",  # localityName
+        bytes([0x55, 0x04, 0x08]): "ST",  # stateOrProvinceName
+        bytes([0x55, 0x04, 0x0A]): "O",  # organizationName
+        bytes([0x55, 0x04, 0x0B]): "OU",  # organizationalUnitName
+    }
+
+    try:
+        while i < len(der_bytes):
+            # Skip SEQUENCE (0x30) and SET (0x31) tags
+            if der_bytes[i] in (0x30, 0x31):
+                i += 1
+                if i >= len(der_bytes):
+                    break
+                # Skip length byte
+                i += 1
+                continue
+
+            # Look for OID tag (0x06)
+            if der_bytes[i] == 0x06:
+                i += 1
+                if i >= len(der_bytes):
+                    break
+                oid_len = der_bytes[i]
+                i += 1
+                if i + oid_len > len(der_bytes):
+                    break
+                oid = der_bytes[i : i + oid_len]
+                i += oid_len
+
+                # Get attribute name from OID
+                attr_name = oid_map.get(oid, f"OID.{oid.hex()}")
+
+                # Next should be the value (various string types)
+                if i < len(der_bytes):
+                    value_type = der_bytes[i]
+                    i += 1
+                    if i >= len(der_bytes):
+                        break
+                    value_len = der_bytes[i]
+                    i += 1
+                    if i + value_len > len(der_bytes):
+                        break
+                    value = der_bytes[i : i + value_len]
+                    i += value_len
+
+                    # Try to decode the value as UTF-8 or UTF-16BE
+                    try:
+                        if value_type == 0x1E:  # BMPString (UTF-16BE)
+                            value_str = value.decode("utf-16-be")
+                        else:
+                            value_str = value.decode("utf-8")
+                        result.append(f"{attr_name}={value_str}")
+                    except UnicodeDecodeError:
+                        result.append(f"{attr_name}=<binary>")
+            else:
+                i += 1
+
+    except (IndexError, ValueError):
+        return None
+
+    return ", ".join(result) if result else None
+
+
+def _parse_certificate_info(cert_bytes: bytes) -> Optional[Dict[str, str]]:
+    """
+    Parse a DER-encoded X.509 certificate using openssl to extract key information.
+
+    Returns: Dict with 'subject', 'issuer', 'notBefore', 'notAfter', 'serial' or None
+    """
+    if not cert_bytes:
+        return None
+
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".der", delete=False) as f:
+            f.write(cert_bytes)
+            temp_path = f.name
+
+        # Use openssl to parse the certificate
+        result = subprocess.run(
+            [
+                "openssl",
+                "x509",
+                "-inform",
+                "DER",
+                "-in",
+                temp_path,
+                "-noout",
+                "-subject",
+                "-issuer",
+                "-dates",
+                "-serial",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        os.unlink(temp_path)
+
+        if result.returncode != 0:
+            return None
+
+        # Parse the output into a dictionary
+        info = {}
+        for line in result.stdout.strip().split("\n"):
+            if line.startswith("subject="):
+                info["subject"] = line[8:]
+            elif line.startswith("issuer="):
+                info["issuer"] = line[7:]
+            elif line.startswith("notBefore="):
+                info["notBefore"] = line[10:]
+            elif line.startswith("notAfter="):
+                info["notAfter"] = line[9:]
+            elif line.startswith("serial="):
+                info["serial"] = line[7:]
+
+        return info if info else None
+
+    except (OSError, subprocess.TimeoutExpired, FileNotFoundError):
+        # openssl might not be available or timeout
+        return None
+
+
+def _enhance_certificate_item(item: Dict[str, Any]) -> None:
+    """
+    Enhance a certificate item with human-readable parsed fields.
+
+    Adds 'issr_readable', 'subj_readable', and 'cert_info' fields in-place.
+    Silently handles any parsing errors to avoid breaking the command.
+    """
+    if item.get("class") != "cert":
+        return
+
+    try:
+        # Parse issuer (issr)
+        if "issr" in item and isinstance(item["issr"], bytes):
+            readable_issuer = _parse_x509_dn(item["issr"])
+            if readable_issuer:
+                item["issr_readable"] = readable_issuer
+
+        # Parse subject (subj)
+        if "subj" in item and isinstance(item["subj"], bytes):
+            readable_subject = _parse_x509_dn(item["subj"])
+            if readable_subject:
+                item["subj_readable"] = readable_subject
+
+        # Parse full certificate (v_Data) for detailed info
+        if "v_Data" in item and isinstance(item["v_Data"], bytes):
+            cert_info = _parse_certificate_info(item["v_Data"])
+            if cert_info:
+                # Store as formatted string for display
+                info_parts = []
+                if "subject" in cert_info:
+                    info_parts.append(f"Subject: {cert_info['subject']}")
+                if "issuer" in cert_info:
+                    info_parts.append(f"Issuer: {cert_info['issuer']}")
+                if "notBefore" in cert_info and "notAfter" in cert_info:
+                    info_parts.append(f"Valid: {cert_info['notBefore']} to {cert_info['notAfter']}")
+                if "serial" in cert_info:
+                    info_parts.append(f"Serial: {cert_info['serial']}")
+
+                if info_parts:
+                    item["cert_info"] = "\n    ".join(info_parts)
+    except Exception:
+        # Silently ignore any parsing errors - just don't add the parsed fields
+        pass
 
 
 def _extract_nsdata_bytes(target: lldb.SBTarget, nsdata_value: lldb.SBValue, verbose: bool = False) -> Optional[bytes]:
@@ -356,6 +562,7 @@ def _query_keychain_class(
     query_{class_value}[(id)kSecReturnAttributes] = @YES;
     query_{class_value}[(id)kSecReturnData] = @YES;
     query_{class_value}[(id)kSecMatchLimit] = (id)kSecMatchLimitAll;
+    query_{class_value}[(id)kSecUseAuthenticationUI] = (id)kSecUseAuthenticationUISkip;
 
     CFTypeRef result_{class_value} = NULL;
     OSStatus status_{class_value} = SecItemCopyMatching((CFDictionaryRef)query_{class_value}, &result_{class_value});
@@ -363,7 +570,12 @@ def _query_keychain_class(
     (NSArray *)result_{class_value};
     """
 
-    result = target.EvaluateExpression(expr)
+    # Configure expression options to ignore C++ exceptions
+    options = lldb.SBExpressionOptions()
+    options.SetIgnoreBreakpoints(True)  # Ignore all breakpoints including exception breakpoints
+    options.SetTrapExceptions(False)  # Don't trap C++ exceptions
+
+    result = target.EvaluateExpression(expr, options)
 
     if not result.IsValid():
         if verbose:
@@ -421,6 +633,20 @@ def _format_keychain_item(item_dict: Dict[str, Any], verbose: bool = False) -> s
     lines = []
     lines.append(f"Class: {class_value}")
 
+    # For certificates, show parsed info prominently
+    if class_value == "cert":
+        # Show readable issuer and subject if available
+        if "issr_readable" in item_dict:
+            lines.append(f"  Issuer: {item_dict['issr_readable']}")
+        if "subj_readable" in item_dict:
+            lines.append(f"  Subject: {item_dict['subj_readable']}")
+
+        # Show full certificate info if available
+        if "cert_info" in item_dict:
+            lines.append("  Certificate:")
+            for info_line in item_dict["cert_info"].split("\n"):
+                lines.append(f"    {info_line.strip()}")
+
     # Common fields to look for in order
     fields = ["agrp", "acct", "svce", "labl", "v_Data", "cdat", "mdat"]
 
@@ -456,9 +682,16 @@ def _format_keychain_item(item_dict: Dict[str, Any], verbose: bool = False) -> s
             else:
                 lines.append(f"  {field}: {value}")
 
-    # Show any other fields not in the common list, excluding internal fields
+    # Show any other fields not in the common list, excluding internal/parsed fields
+    skip_fields = ["issr_readable", "subj_readable", "cert_info"]
     for key, value in item_dict.items():
-        if key not in fields and key != "class" and not key.startswith("_"):
+        if key not in fields and key != "class" and not key.startswith("_") and key not in skip_fields:
+            # Skip raw issr/subj if we have readable versions (to avoid duplication)
+            if key == "issr" and "issr_readable" in item_dict:
+                continue
+            if key == "subj" and "subj_readable" in item_dict:
+                continue
+
             if isinstance(value, bytes):
                 lines.append(f"  {key}: <{len(value)} bytes>")
             elif isinstance(value, float):
@@ -487,10 +720,12 @@ def list_keychain_items(
         okeychain list              # List all accessible keychain items
         okeychain list --filter=<query>  # Filter by access group or account
         okeychain list --verbose    # Show detailed debug info
+        okeychain list --keychain=<path>  # Use specific keychain file
     """
     # Parse flags
     verbose = "--verbose" in command or "-v" in command
     filter_query = None
+    keychain_path = None
 
     # Extract filter argument
     if "--filter=" in command:
@@ -499,14 +734,31 @@ def list_keychain_items(
         # Get the filter value (up to next space or end)
         filter_query = rest.split()[0] if rest else None
 
+    # Extract keychain path argument
+    if "--keychain=" in command:
+        start = command.find("--keychain=") + len("--keychain=")
+        rest = command[start:].strip()
+        # Get the keychain path (up to next space or end)
+        keychain_path = rest.split()[0] if rest else None
+
     stopped = require_stopped_process(debugger, result)
     if not stopped:
         return
     frame, process = stopped
     target = debugger.GetSelectedTarget()
 
+    # Get the process name to check for process-specific keychain (if not manually specified)
+    process_name = None
+    if not keychain_path:
+        process_name = target.GetExecutable().GetFilename()
+        if verbose:
+            print(f"[DEBUG] Process name: {process_name}")
+    else:
+        if verbose:
+            print(f"[DEBUG] Using specified keychain: {keychain_path}")
+
     # Use the optimized fast query path
-    plist_bytes, error = _query_all_keychain_items_fast(target, verbose)
+    plist_bytes, error = _query_all_keychain_items_fast(target, verbose, process_name, keychain_path)
 
     if error:
         result.SetError(error)
@@ -534,6 +786,10 @@ def list_keychain_items(
 
     if verbose:
         print(f"[DEBUG] Parsed {len(all_items)} items from plist")
+
+    # Enhance certificate items with parsed fields
+    for item in all_items:
+        _enhance_certificate_item(item)
 
     # Filter if requested
     if filter_query:
@@ -584,7 +840,10 @@ def list_keychain_items(
 
 
 def _query_all_keychain_items_fast(
-    target: lldb.SBTarget, verbose: bool = False
+    target: lldb.SBTarget,
+    verbose: bool = False,
+    process_name: Optional[str] = None,
+    explicit_keychain_path: Optional[str] = None,
 ) -> Tuple[Optional[bytes], Optional[str]]:
     """
     Query ALL keychain classes using a single monolithic expression.
@@ -594,10 +853,29 @@ def _query_all_keychain_items_fast(
     - Old: 1400+ expressions for 100 items (14-70 seconds)
     - New: 3 expressions total (<1 second)
 
+    Args:
+        target: The LLDB target
+        verbose: Enable verbose debug output
+        process_name: Name of the process (e.g., 'apsd') to auto-detect process-specific keychain
+        explicit_keychain_path: Explicit path to keychain file (overrides auto-detection)
+
     Returns: (plist_bytes, error)
     """
     if verbose:
         print("[DEBUG] Building monolithic keychain query expression...")
+
+    # Determine keychain path: explicit path takes priority over auto-detection
+    keychain_path = None
+    if explicit_keychain_path:
+        keychain_path = explicit_keychain_path
+        if verbose:
+            print(f"[DEBUG] Using explicit keychain path: {keychain_path}")
+    elif process_name:
+        # Check for process-specific keychain in /Library/Keychains/
+        potential_path = f"/Library/Keychains/{process_name}.keychain"
+        if verbose:
+            print(f"[DEBUG] Auto-detecting process-specific keychain: {potential_path}")
+        keychain_path = potential_path
 
     # Build a single expression that queries all classes and serializes to plist
     # Use unique variable names with prefix to avoid symbol conflicts
@@ -606,7 +884,25 @@ def _query_all_keychain_items_fast(
     @import Security;
 
     NSMutableArray *lldb_okeychain_all_items = [NSMutableArray array];
+    NSMutableArray *lldb_okeychain_search_list = nil;
 
+    """
+
+    # Add code to open process-specific keychain if needed
+    if keychain_path:
+        # Use raw string for path to avoid escaping issues
+        expr += f"""
+    // Open process-specific keychain
+    SecKeychainRef lldb_kc_specific_keychain = NULL;
+    OSStatus lldb_kc_open_status = SecKeychainOpen("{keychain_path}", &lldb_kc_specific_keychain);
+
+    if (lldb_kc_open_status == 0 && lldb_kc_specific_keychain != NULL) {{
+        lldb_okeychain_search_list = [NSMutableArray arrayWithObject:(__bridge id)lldb_kc_specific_keychain];
+    }}
+
+    """
+
+    expr += """
     // Query each keychain class
     NSArray *lldb_okeychain_sec_classes = @[
         (id)kSecClassGenericPassword,
@@ -627,6 +923,12 @@ def _query_all_keychain_items_fast(
         lldb_kc_query[(id)kSecReturnAttributes] = @YES;
         lldb_kc_query[(id)kSecReturnData] = @YES;
         lldb_kc_query[(id)kSecMatchLimit] = (id)kSecMatchLimitAll;
+        lldb_kc_query[(id)kSecUseAuthenticationUI] = (id)kSecUseAuthenticationUISkip;
+
+        // Use specific keychain search list if available (for process-specific keychains)
+        if (lldb_okeychain_search_list != nil) {
+            lldb_kc_query[(id)kSecMatchSearchList] = lldb_okeychain_search_list;
+        }
 
         CFTypeRef lldb_kc_query_result = NULL;
         OSStatus lldb_kc_status = SecItemCopyMatching((CFDictionaryRef)lldb_kc_query, &lldb_kc_query_result);
@@ -660,7 +962,12 @@ def _query_all_keychain_items_fast(
     if verbose:
         print("[DEBUG] Executing monolithic query...")
 
-    result = target.EvaluateExpression(expr)
+    # Configure expression options to ignore C++ exceptions
+    options = lldb.SBExpressionOptions()
+    options.SetIgnoreBreakpoints(True)  # Ignore all breakpoints including exception breakpoints
+    options.SetTrapExceptions(False)  # Don't trap C++ exceptions
+
+    result = target.EvaluateExpression(expr, options)
 
     if not result.IsValid():
         if verbose:
@@ -681,6 +988,13 @@ def _query_all_keychain_items_fast(
     if not any(x in type_name for x in ["NSData", "NSCFData", "NSConcreteData", "_NSInlineData"]):
         if verbose:
             print(f"[DEBUG] No data returned (type: {type_name})")
+        return None, None
+
+    # Check if the NSData pointer is NULL (no items found)
+    data_ptr = result.GetValueAsUnsigned()
+    if data_ptr == 0:
+        if verbose:
+            print("[DEBUG] NSData pointer is NULL (no items found)")
         return None, None
 
     # Extract the plist bytes using the existing helper
@@ -708,10 +1022,14 @@ def extract_keychain_items(
         okeychain extract <output_file>  # Extract all keychain items to file
         okeychain extract <output_file> --filter=<query>  # Extract filtered items
         okeychain extract <output_file> --verbose  # Show debug info during extraction
+        okeychain extract <output_file> --raw  # Also extract raw data files
+        okeychain extract <output_file> --keychain=<path>  # Use specific keychain file
     """
     # Parse flags
     verbose = "--verbose" in command or "-v" in command
+    raw_mode = "--raw" in command
     filter_query = None
+    keychain_path = None
 
     # Extract filter argument
     if "--filter=" in command:
@@ -721,13 +1039,23 @@ def extract_keychain_items(
         # Remove filter from command to get the file path
         command = command.replace(f"--filter={filter_query}", "").strip()
 
-    # Remove verbose flag from command
-    command = command.replace("--verbose", "").replace("-v", "").strip()
+    # Extract keychain path argument
+    if "--keychain=" in command:
+        start = command.find("--keychain=") + len("--keychain=")
+        rest = command[start:].strip()
+        keychain_path = rest.split()[0] if rest else None
+        # Remove keychain from command to get the file path
+        command = command.replace(f"--keychain={keychain_path}", "").strip()
+
+    # Remove verbose and raw flags from command
+    command = command.replace("--verbose", "").replace("-v", "").replace("--raw", "").strip()
 
     # Get the output file path
     args = command.strip().split()
     if not args:
-        result.SetError("Usage: okeychain extract <output_file> [--filter=<query>] [--verbose]")
+        result.SetError(
+            "Usage: okeychain extract <output_file> [--filter=<query>] [--verbose] [--raw] [--keychain=<path>]"
+        )
         return
 
     output_file = args[0]
@@ -738,8 +1066,18 @@ def extract_keychain_items(
     frame, process = stopped
     target = debugger.GetSelectedTarget()
 
+    # Get the process name to check for process-specific keychain (if not manually specified)
+    process_name = None
+    if not keychain_path:
+        process_name = target.GetExecutable().GetFilename()
+        if verbose:
+            print(f"[DEBUG] Process name: {process_name}")
+    else:
+        if verbose:
+            print(f"[DEBUG] Using specified keychain: {keychain_path}")
+
     # Use the optimized fast query path
-    plist_bytes, error = _query_all_keychain_items_fast(target, verbose)
+    plist_bytes, error = _query_all_keychain_items_fast(target, verbose, process_name, keychain_path)
 
     if error:
         result.SetError(error)
@@ -762,6 +1100,10 @@ def extract_keychain_items(
 
     if verbose:
         print(f"[DEBUG] Parsed {len(all_items)} items from plist")
+
+    # Enhance certificate items with parsed fields
+    for item in all_items:
+        _enhance_certificate_item(item)
 
     # Filter if requested
     if filter_query:
@@ -836,6 +1178,70 @@ def extract_keychain_items(
         with open(output_file, "wb") as f:
             plistlib.dump(plist_data, f, fmt=plistlib.FMT_XML)
         print(f"Extracted {len(all_items)} keychain item(s) to {output_file}")
+
+        # If --raw flag is set, also extract raw data files
+        if raw_mode:
+            # Create raw directory: remove suffix from output_file and add '-raw'
+            base_name = output_file
+            # Remove common suffixes
+            for suffix in [".plist", ".xml", ".txt"]:
+                if base_name.endswith(suffix):
+                    base_name = base_name[: -len(suffix)]
+                    break
+            raw_dir = f"{base_name}-raw"
+
+            try:
+                os.makedirs(raw_dir, exist_ok=True)
+                if verbose:
+                    print(f"[DEBUG] Created raw directory: {raw_dir}")
+
+                # Extract raw data for each item
+                raw_count = 0
+                for i, item in enumerate(all_items):
+                    # Get the data field (v_Data for most items)
+                    data = item.get("v_Data")
+                    if data is None or not isinstance(data, bytes):
+                        if verbose:
+                            print(f"[DEBUG] Skipping item {i + 1}: no data or data is not bytes")
+                        continue
+
+                    # Get the label (labl) field
+                    label = item.get("labl", "unknown")
+                    if isinstance(label, bytes):
+                        # Convert bytes to string if needed
+                        try:
+                            label = label.decode("utf-8")
+                        except UnicodeDecodeError:
+                            label = "unknown"
+
+                    # Sanitize label for filename (remove invalid characters)
+                    label = str(label).replace("/", "_").replace("\\", "_").replace(":", "_")
+
+                    # Determine file extension based on class
+                    class_val = item.get("class", "")
+                    if class_val == "cert":
+                        ext = ".crt"
+                    else:
+                        ext = ".bytes"
+
+                    # Create filename: [itemid]_[labl].ext
+                    itemid = i + 1  # Use 1-based index as itemid
+                    filename = f"{itemid}_{label}{ext}"
+                    filepath = os.path.join(raw_dir, filename)
+
+                    # Write the raw data
+                    with open(filepath, "wb") as raw_file:
+                        raw_file.write(data)
+
+                    raw_count += 1
+                    if verbose:
+                        print(f"[DEBUG] Wrote {len(data)} bytes to {filepath}")
+
+                print(f"Extracted {raw_count} raw data file(s) to {raw_dir}")
+            except Exception as e:
+                result.SetError(f"Failed to write raw files: {e}")
+                return
+
         result.SetStatus(lldb.eReturnStatusSuccessFinishResult)
     except Exception as e:
         result.SetError(f"Failed to write plist file: {e}")
@@ -851,8 +1257,18 @@ def okeychain_main(
     Main entry point for okeychain command.
 
     Usage:
-        okeychain list [--filter=<query>] [--verbose]
-        okeychain extract <output_file> [--filter=<query>] [--verbose]
+        okeychain list [--filter=<query>] [--verbose] [--keychain=<path>]
+        okeychain extract <output_file> [--filter=<query>] [--verbose] [--raw] [--keychain=<path>]
+
+    Examples:
+        # macOS: auto-detect apsd.keychain
+        okeychain list
+
+        # iOS: specify keychain path explicitly
+        okeychain list --keychain=/private/var/Keychains/keychain-2.db
+
+        # Extract with custom keychain
+        okeychain extract /tmp/keys.plist --keychain=/Library/Keychains/System.keychain
     """
     args = command.strip().split()
 
@@ -869,8 +1285,12 @@ def okeychain_main(
         result.SetError(
             f"Unknown subcommand: {args[0]}\n\n"
             "Usage:\n"
-            "  okeychain list [--filter=<query>] [--verbose]\n"
-            "  okeychain extract <output_file> [--filter=<query>] [--verbose]"
+            "  okeychain list [--filter=<query>] [--verbose] [--keychain=<path>]\n"
+            "  okeychain extract <output_file> [--filter=<query>] [--verbose] [--raw] [--keychain=<path>]\n\n"
+            "Examples:\n"
+            "  okeychain list --keychain=/private/var/Keychains/keychain-2.db  # iOS\n"
+            "  okeychain list --keychain=/Library/Keychains/System.keychain    # macOS system\n"
+            "  okeychain extract /tmp/keys.plist --verbose                      # Auto-detect"
         )
 
 

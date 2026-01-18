@@ -29,18 +29,26 @@ def verify_paths(binary_path: str, build_hint: str = None) -> None:
         sys.exit(1)
 
 
-def run_lldb_session(binary_path: str, commands: str) -> None:
+def run_lldb_session(binary_path: str, commands: str, use_sudo: bool = False) -> None:
     """Run an interactive LLDB session with the given commands.
 
     Uses --no-lldbinit to skip loading ~/.lldbinit, ensuring scripts are
     loaded from the working directory instead of ~/.lldb-objc.
+
+    Args:
+        binary_path: Path to binary, or None for attach-only sessions
+        commands: LLDB commands to execute
+        use_sudo: If True, run lldb with sudo (needed for system process attachment)
     """
     with tempfile.NamedTemporaryFile(mode="w", suffix=".lldb", delete=False) as f:
         f.write(commands)
         command_file = f.name
 
     try:
-        subprocess.run(["lldb", "--no-lldbinit", "-s", command_file], check=False)
+        cmd = ["lldb", "--no-lldbinit", "-s", command_file]
+        if use_sudo:
+            cmd = ["sudo"] + cmd
+        subprocess.run(cmd, check=False)
     finally:
         os.unlink(command_file)
 
@@ -112,4 +120,19 @@ run
 
 # Load CoreSymbolication.framework for additional testing while stopped
 expr (void)dlopen("/System/Library/PrivateFrameworks/CoreSymbolication.framework/CoreSymbolication", 0x2)
+"""
+
+
+def make_commands_for_system_process(process_name: str) -> str:
+    """Generate LLDB commands for attaching to a system process.
+
+    Attaches to the named process without loading any additional libraries.
+    The process must already be running.
+    """
+    return f"""
+# Load LLDB Objective-C commands
+command script import {SCRIPTS_DIR}
+
+# Attach to the running system process
+process attach -n {process_name}
 """

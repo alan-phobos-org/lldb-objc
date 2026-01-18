@@ -9,6 +9,9 @@ __pycache__/
 # LLDB backups
 *.lldbinit.backup
 
+# Sudo configuration (local only)
+.sudo/
+
 # IDE
 .vscode/
 .idea/

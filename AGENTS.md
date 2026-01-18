@@ -34,6 +34,10 @@ which python               # Should show .venv/bin/python
 
 The venv includes all dependencies (pytest, pexpect, etc.). If you're not in the venv, commands and imports will fail.
 
+### Sudo Configuration for System Process Testing
+
+Smoke tests and some integration tests attach to system processes (e.g., `apsd`) which requires sudo. See `.sudo/` directory for setup scripts (gitignored).
+
 ## Quick Reference
 
 ### Build Commands
@@ -42,6 +46,7 @@ The venv includes all dependencies (pytest, pexpect, etc.). If you're not in the
 |---------|---------|
 | `./build.sh check` | **Pre-commit** (lint + all tests) |
 | `./build.sh test-unit` | Unit tests only (pytest) |
+| `./build.sh test-smoke` | Smoke tests against system process (depends on test-unit) |
 | `./build.sh test-integration` | All integration tests |
 | `./build.sh test-integration <cmd>` | **Fast re-test**: Single integration suite (e.g., `ocls`) |
 | `./build.sh lint` | Format and lint |
@@ -58,6 +63,7 @@ The venv includes all dependencies (pytest, pexpect, etc.). If you're not in the
 | `opool` | Find in autorelease pools | `opool NSDate` |
 | `oinstance` | Inspect object | `oinstance $0` |
 | `oinstances` | Find class instances in memory | `oinstances NSString` |
+| `okeychain` | Query keychain items | `okeychain list --keychain=/path.db` |
 | `osbx` | Scan sandbox writable paths | `osbx --thorough` |
 | `oreload` | Reload commands | `oreload` |
 
@@ -130,6 +136,8 @@ docs/                 # Design documents and guides
 
 ### Implementation Notes
 
+**okeychain**: Supports iOS and macOS. Auto-detects process-specific keychains on macOS (e.g., `/Library/Keychains/apsd.keychain`). Use `--keychain=<path>` for iOS remote debugging or custom keychain files. Uses `SecKeychainOpen` + `kSecMatchSearchList` to mirror how binaries access their own keychains.
+
 For detailed implementation patterns (LLDB expression evaluation, data extraction, etc.), see:
 - [docs/PITFALLS.md](docs/PITFALLS.md) - Common gotchas and workarounds
 - [docs/DEBUGGING.md](docs/DEBUGGING.md) - Debugging LLDB scripts
@@ -146,6 +154,7 @@ Use `./build.sh test-unit` to verify changes are robust.
 | Command | Purpose | Speed |
 |---------|---------|-------|
 | `./build.sh test-unit` | Unit tests (pytest) | <0.1s |
+| `./build.sh test-smoke` | Quick smoke tests vs system process | ~5-10s |
 | `./build.sh test-integration` | All integration tests | ~2-3min |
 | `./build.sh test-integration <cmd>` | Single integration suite | ~5-10s |
 | `./build.sh check` | Full pre-commit (unit + all integration) | ~3min |

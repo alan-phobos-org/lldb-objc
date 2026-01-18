@@ -48,7 +48,7 @@ def register_command(
         description: Description shown at install time
     """
     module_path = f"{module_name}.{function_name}"
-    debugger.HandleCommand(f'command script add -h "{help_text}" -f {module_path} {command_name}')
+    debugger.HandleCommand(f'command script add --overwrite -h "{help_text}" -f {module_path} {command_name}')
     print(f"[lldb-objc v{__version__}] '{command_name}' installed - {description}")
 
 

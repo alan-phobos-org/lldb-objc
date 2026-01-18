@@ -57,6 +57,7 @@ Commands:
   version               Show current version (from git)
   lint                  Run linters (ruff check + format)
   test-unit             Run unit tests (depends on lint)
+  test-smoke            Run smoke tests against system process (depends on test-unit)
   test-integration      Run all integration tests (depends on test-unit)
   test-integration CMD  Run specific integration test suite (e.g., ocls, obrk)
   check                 Full pre-commit check (runs test-integration)
@@ -87,6 +88,30 @@ cmd_test_unit() {
     run_pytest "$ROOT_DIR/tests/unit/" -v
 }
 
+cmd_test_smoke() {
+    echo "Running smoke tests (with unit tests and linting)..."
+    cmd_test_unit
+
+    # Only run smoke tests if LLDB is available
+    if command -v lldb >/dev/null 2>&1; then
+        echo ""
+        echo "Running smoke tests against system process..."
+        echo "Note: This requires sudo privileges to attach to system processes."
+        echo "      Ensure passwordless sudo is configured (see sudoers-lldb-objc)"
+        echo ""
+
+        # Run smoke tests (test script will call sudo lldb internally)
+        if run_python "$ROOT_DIR/tests/test_smoke.py"; then
+            echo ""
+            echo "✓ Smoke tests passed"
+        else
+            die "Smoke tests failed (see output above for details)"
+        fi
+    else
+        die "LLDB not available - smoke tests require LLDB"
+    fi
+}
+
 cmd_test_integration() {
     local command_name="${1:-}"
 
@@ -106,7 +131,14 @@ cmd_test_integration() {
 
             echo ""
             echo "Running integration test: $test_file..."
-            run_python "$test_path"
+
+            # Run integration test and capture exit code
+            if run_python "$test_path"; then
+                echo ""
+                echo "✓ Integration test passed: $command_name"
+            else
+                die "Integration test failed: $command_name (see output above for details)"
+            fi
         else
             die "LLDB not available - integration tests require LLDB"
         fi
@@ -119,7 +151,14 @@ cmd_test_integration() {
         if command -v lldb >/dev/null 2>&1; then
             echo ""
             echo "Running LLDB integration tests..."
-            run_python "$ROOT_DIR/tests/run_all_tests.py"
+
+            # Run integration tests and capture exit code
+            if run_python "$ROOT_DIR/tests/run_all_tests.py"; then
+                echo ""
+                echo "✓ All integration tests passed"
+            else
+                die "Integration tests failed (see output above for details)"
+            fi
         else
             echo ""
             echo "⚠️  Skipping integration tests (LLDB not available)"
@@ -385,6 +424,10 @@ case "${1:-help}" in
 
     test-unit)
         cmd_test_unit
+        ;;
+
+    test-smoke)
+        cmd_test_smoke
         ;;
 
     test-integration)

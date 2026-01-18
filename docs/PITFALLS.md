@@ -141,6 +141,39 @@ for i in range(min(count, MAX_ITEMS)):
 - Always check validity and handle errors before dereferencing
 - Limit iterations to prevent infinite loops or timeouts
 
+### Keychain Access and Authorization Prompts
+
+**Problem**: Calling `SecItemCopyMatching()` via LLDB expression evaluation can trigger macOS keychain authorization prompts. When the prompt appears, the process receives SIGSTOP, causing LLDB expression evaluation to fail with "Execution was interrupted, reason: signal SIGSTOP".
+
+**Why it happens**:
+- macOS Security framework requires user authorization for sensitive keychain items
+- Authorization prompts pause the target process with SIGSTOP
+- LLDB's expression evaluator can't handle unexpected process stops
+- System processes (e.g., `identityservicesd`) have stricter keychain access controls
+
+**The fix**: Use `kSecUseAuthenticationUISkip` in keychain queries to suppress authorization prompts:
+
+```objc
+NSMutableDictionary *query = [NSMutableDictionary dictionary];
+query[(id)kSecClass] = (id)kSecClassGenericPassword;
+query[(id)kSecReturnAttributes] = @YES;
+query[(id)kSecReturnData] = @YES;
+query[(id)kSecMatchLimit] = (id)kSecMatchLimitAll;
+query[(id)kSecUseAuthenticationUI] = (id)kSecUseAuthenticationUISkip;  // Critical!
+
+CFTypeRef result = NULL;
+OSStatus status = SecItemCopyMatching((CFDictionaryRef)query, &result);
+```
+
+**Implications**:
+- Only keychain items accessible without user authentication will be returned
+- Items requiring authentication will be silently skipped
+- This is expected behavior when debugging - use `oentitlements` to verify the process has appropriate keychain access entitlements
+
+**Alternatives**:
+- `kSecUseAuthenticationUIFail` - Fail immediately if auth required (returns errSecInteractionNotAllowed)
+- `kSecUseAuthenticationUIAllow` - Default behavior, shows prompts (causes SIGSTOP in LLDB)
+
 ### API Validation
 Verify LLDB methods exist before using:
 
