@@ -51,9 +51,9 @@ def format_permissions(read: bool, write: bool, execute: bool) -> str:
     Returns:
         String like "rw-", "r-x", "rwx", "---"
     """
-    r = 'r' if read else '-'
-    w = 'w' if write else '-'
-    x = 'x' if execute else '-'
+    r = "r" if read else "-"
+    w = "w" if write else "-"
+    x = "x" if execute else "-"
     return f"{r}{w}{x}"
 
 
@@ -101,12 +101,14 @@ def get_stack_regions(process: lldb.SBProcess) -> List[Dict[str, Any]]:
         stack_red_zone = 128
         stack_size = max_sp - min_sp + stack_red_zone
 
-        stacks.append({
-            'thread_id': thread.GetThreadID(),
-            'base': min_sp,
-            'end': max_sp + stack_red_zone,
-            'size': stack_size,
-        })
+        stacks.append(
+            {
+                "thread_id": thread.GetThreadID(),
+                "base": min_sp,
+                "end": max_sp + stack_red_zone,
+                "size": stack_size,
+            }
+        )
 
     return stacks
 
@@ -121,9 +123,6 @@ def get_heap_regions(process: lldb.SBProcess, frame: lldb.SBFrame) -> List[Dict[
     Returns:
         List of dicts with zone_id, base, end, size
     """
-    # Simpler approach: Just get zone count and first zone address
-    expr = "(int)malloc_zone_pressure_relief(0, 0)"
-
     # Try a simpler expression to get basic heap info
     # Use malloc default zone as a starting point
     zone_expr = "(void*)malloc_default_zone()"
@@ -134,13 +133,7 @@ def get_heap_regions(process: lldb.SBProcess, frame: lldb.SBFrame) -> List[Dict[
     if zone_result.IsValid() and not zone_result.GetError().Fail():
         default_zone = zone_result.GetValueAsUnsigned(0)
         if default_zone != 0:
-            heap_regions.append({
-                'zone_id': 0,
-                'base': default_zone,
-                'end': default_zone,
-                'size': 0,
-                'name': 'default'
-            })
+            heap_regions.append({"zone_id": 0, "base": default_zone, "end": default_zone, "size": 0, "name": "default"})
 
     # Try to get additional zones using malloc_get_all_zones
     zones_expr = """
@@ -158,13 +151,15 @@ def get_heap_regions(process: lldb.SBProcess, frame: lldb.SBFrame) -> List[Dict[
         if num_zones > len(heap_regions):
             # We know there are more zones, report them as detected
             for i in range(len(heap_regions), min(num_zones, 10)):
-                heap_regions.append({
-                    'zone_id': i,
-                    'base': 0,  # Address unknown
-                    'end': 0,
-                    'size': 0,
-                    'name': f'zone {i}'
-                })
+                heap_regions.append(
+                    {
+                        "zone_id": i,
+                        "base": 0,  # Address unknown
+                        "end": 0,
+                        "size": 0,
+                        "name": f"zone {i}",
+                    }
+                )
 
     return heap_regions
 
@@ -209,9 +204,9 @@ def get_shared_region(process: lldb.SBProcess, frame: lldb.SBFrame) -> Optional[
         return None
 
     return {
-        'base': base,
-        'end': base + size,
-        'size': size,
+        "base": base,
+        "end": base + size,
+        "size": size,
     }
 
 
@@ -249,13 +244,14 @@ def show_memory_layout(
     print(f"STACKS ({len(stacks)} thread{'s' if len(stacks) != 1 else ''}):")
     if stacks:
         for stack in stacks:
-            thread_id = stack['thread_id']
-            base = stack['base']
-            end = stack['end']
-            size = stack['size']
+            thread_id = stack["thread_id"]
+            base = stack["base"]
+            end = stack["end"]
+            size = stack["size"]
             size_str = format_size(size)
             perms = format_permissions(True, True, False)  # rw-
-            print(f"  {ANSI_DIM}Thread #{thread_id:2d}  0x{base:016x}-0x{end:016x}{ANSI_RESET}  {size_str:>7}  [{perms}]")
+            addr_range = f"0x{base:016x}-0x{end:016x}"
+            print(f"  {ANSI_DIM}Thread #{thread_id:2d}  {addr_range}{ANSI_RESET}  {size_str:>7}  [{perms}]")
     else:
         print(f"  {ANSI_DIM}No threads found{ANSI_RESET}")
 
@@ -267,9 +263,9 @@ def show_memory_layout(
     print(f"HEAP REGIONS ({len(heap_regions)} zone{'s' if len(heap_regions) != 1 else ''}):")
     if heap_regions:
         for region in heap_regions:
-            zone_id = region['zone_id']
-            base = region['base']
-            name = region.get('name', f'zone {zone_id}')
+            zone_id = region["zone_id"]
+            base = region["base"]
+            name = region.get("name", f"zone {zone_id}")
             # For zones, we don't have exact size, so just show the zone address
             if base != 0:
                 print(f"  {ANSI_DIM}Zone {zone_id}     0x{base:016x}{ANSI_RESET}  ({name})  [rw-]")
@@ -283,11 +279,11 @@ def show_memory_layout(
     # Get shared region
     shared_region = get_shared_region(process, frame)
 
-    print(f"SHARED REGION (dyld shared cache):")
+    print("SHARED REGION (dyld shared cache):")
     if shared_region:
-        base = shared_region['base']
-        end = shared_region['end']
-        size = shared_region['size']
+        base = shared_region["base"]
+        end = shared_region["end"]
+        size = shared_region["size"]
         size_str = format_size(size)
         perms = format_permissions(True, False, True)  # r-x
         print(f"  {ANSI_DIM}Region     0x{base:016x}-0x{end:016x}{ANSI_RESET}  {size_str:>7}  [{perms}]")
