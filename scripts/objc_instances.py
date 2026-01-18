@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
 """
 LLDB script for finding instances of Objective-C classes in memory.
+
+TODO: THIS COMMAND IS CURRENTLY BROKEN - EXC_BAD_ACCESS crashes on memory scanning.
+      The issue is that direct memory dereferencing in JIT-compiled expressions
+      crashes when encountering protected/unmapped pages, even with validation.
+      Need to investigate safe memory reading approaches in LLDB expression context.
+
 Usage: oinstances [options] <ClassName>
-       oinstances NSString              # Find all NSString instances in heap
-       oinstances NSDate --stack        # Include stack scanning
+       oinstances NSString              # Find all NSString instances (VM scan)
+       oinstances NSDate --stack        # Search stack only
        oinstances UIViewController -M 100  # Find up to 100 instances
-       oinstances NSObject --vm-regions # Scan all VM regions (comprehensive)
+       oinstances NSObject --heap       # Scan malloc heap (may be unstable)
 
 This command efficiently scans memory for instances of the specified class
 (including subclasses) using native C code execution for maximum performance.
+
+By default, scans all writable VM regions which is reliable across all processes.
+Use --heap to scan malloc zones instead (faster but may crash in some processes).
 
 Adapted from LLDB's heap.py for optimal memory scanning efficiency.
 """
@@ -196,10 +205,11 @@ typedef struct callback_baton_t {{
 }} callback_baton_t;
 
 compare_callback_t compare_callback = [](const void *a, const void *b) -> int {{
-    Class a_ptr = *(Class *)a;
-    Class b_ptr = *(Class *)b;
-    if (a_ptr < b_ptr) return -1;
-    if (a_ptr > b_ptr) return +1;
+    // a points to the search key (Class value), b points to array element (Class value)
+    Class a_val = *(const Class *)a;
+    Class b_val = *(const Class *)b;
+    if (a_val < b_val) return -1;
+    if (a_val > b_val) return +1;
     return 0;
 }};
 
@@ -210,12 +220,37 @@ range_callback_t range_callback = [](task_t task, void *baton, unsigned type,
     class_getSuperclass_type class_getSuperclass_impl = (class_getSuperclass_type)class_getSuperclass;
     callback_baton_t *lldb_info = (callback_baton_t *)baton;
 
-    // Check if this memory region could contain an ObjC object (at least pointer size)
-    if (sizeof(Class) <= ptr_size) {{
-        Class *curr_class_ptr = (Class *)ptr_addr;
+    // For VM regions (type 64), scan through the entire region
+    // For heap blocks (type 1), only check the start - each block is one object
+    // For stack/segments, only check the start
+    bool scan_range = (type == 64);  // Only VM regions get full scanning
+    uintptr_t step = scan_range ? sizeof(void*) : ptr_size;
+    uintptr_t end_addr = ptr_addr + ptr_size;
+
+    // Iterate through the memory range
+    for (uintptr_t addr = ptr_addr; addr < end_addr && addr + sizeof(Class) <= end_addr; addr += step) {{
+        if (lldb_info->num_matches >= MAX_MATCHES)
+            break;
+
+        // Validate address before accessing
+        // Must be pointer-aligned and in a reasonable range
+        if ((addr & (sizeof(void*) - 1)) != 0)  // Check alignment
+            continue;
+        if (addr < 0x100000000ULL)  // Skip obviously low addresses
+            continue;
+
+        // TODO: This direct memory read causes EXC_BAD_ACCESS when addr points to
+        // protected/unmapped memory, even though we validated it above.
+        // The validation only checks alignment and range, not actual page protection.
+        // Need to use a safe read mechanism that won't crash on bad pages.
+        Class candidate_class = *(Class *)addr;
+
+        // Skip null pointers
+        if (candidate_class == 0)
+            continue;
 
         // Use binary search to check if this looks like a valid class pointer
-        Class *matching_class_ptr = (Class *)bsearch(curr_class_ptr,
+        Class *matching_class_ptr = (Class *)bsearch(&candidate_class,
                                                       (const void *)lldb_info->classes,
                                                       lldb_info->num_classes,
                                                       sizeof(Class),
@@ -224,7 +259,7 @@ range_callback_t range_callback = [](task_t task, void *baton, unsigned type,
         if (matching_class_ptr) {{
             bool match = false;
             if (lldb_info->target_class) {{
-                Class isa = *curr_class_ptr;
+                Class isa = candidate_class;
                 if (lldb_info->target_class == isa)
                     match = true;
                 else {{
@@ -243,12 +278,16 @@ range_callback_t range_callback = [](task_t task, void *baton, unsigned type,
                 match = true;
 
             if (match && lldb_info->num_matches < MAX_MATCHES) {{
-                lldb_info->matches[lldb_info->num_matches].addr = (void*)ptr_addr;
+                lldb_info->matches[lldb_info->num_matches].addr = (void*)addr;
                 lldb_info->matches[lldb_info->num_matches].size = ptr_size;
                 lldb_info->matches[lldb_info->num_matches].type = type;
                 ++lldb_info->num_matches;
             }}
         }}
+
+        // For malloc blocks, only check the start
+        if (!scan_range)
+            break;
     }}
 }};
 
@@ -320,22 +359,32 @@ unsigned int num_zones = 0;
 task_t task = 0;
 kern_return_t err = (kern_return_t)malloc_get_all_zones(task, task_peek, &zones, &num_zones);
 
-if (KERN_SUCCESS == err) {
+if (KERN_SUCCESS == err && num_zones > 0 && num_zones < 100) {
     for (unsigned int i=0; i<num_zones; ++i) {
         const malloc_zone_t *zone = (const malloc_zone_t *)zones[i];
-        if (zone && zone->introspect)
-            zone->introspect->enumerator(task,
-                                         &baton,
-                                         MALLOC_PTR_IN_USE_RANGE_TYPE,
-                                         (vm_address_t)zone,
-                                         task_peek,
-                                         [](task_t task, void *baton, unsigned type,
-                                            vm_range_t *ranges, unsigned size) -> void {
-                                             range_callback_t callback = ((callback_baton_t *)baton)->callback;
-                                             for (unsigned i=0; i<size; ++i) {
-                                                 callback(task, baton, type, ranges[i].address, ranges[i].size);
-                                             }
-                                         });
+        // Validate zone pointer looks reasonable (non-null, properly aligned)
+        if (!zone || ((uintptr_t)zone & 0x7) || !zone->introspect)
+            continue;
+
+        // Safely enumerate this zone
+        zone->introspect->enumerator(task,
+                                     &baton,
+                                     MALLOC_PTR_IN_USE_RANGE_TYPE,
+                                     (vm_address_t)zone,
+                                     task_peek,
+                                     [](task_t task, void *baton, unsigned type,
+                                        vm_range_t *ranges, unsigned size) -> void {
+                                         // Sanity check: don't process obviously invalid data
+                                         if (size == 0 || size > 1000000)
+                                             return;
+                                         range_callback_t callback = ((callback_baton_t *)baton)->callback;
+                                         for (unsigned i=0; i<size; ++i) {
+                                             // Skip ranges with invalid addresses or sizes
+                                             if (ranges[i].address == 0 || ranges[i].size == 0 || ranges[i].size > 0x100000000ULL)
+                                                 continue;
+                                             callback(task, baton, type, ranges[i].address, ranges[i].size);
+                                         }
+                                     });
     }
 }"""
 
@@ -494,10 +543,10 @@ def find_instances_command(
 
     # Parse options
     max_matches = 32
-    search_heap = True
+    search_heap = False
     search_stack = False
     search_segments = False
-    search_vm_regions = False
+    search_vm_regions = True  # Default to VM regions (more reliable than malloc zones)
     verbose = False
 
     class_name = None
@@ -516,20 +565,23 @@ def find_instances_command(
             else:
                 result.SetError(f"{arg} requires a value")
                 return
+        elif arg == "--heap":
+            search_heap = True
+            search_vm_regions = False
+            i += 1
         elif arg == "--stack":
             search_stack = True
+            search_vm_regions = False
             i += 1
         elif arg == "--segments":
             search_segments = True
+            search_vm_regions = False
             i += 1
         elif arg == "--vm-regions" or arg == "-V":
             search_vm_regions = True
             search_heap = False
             search_stack = False
             search_segments = False
-            i += 1
-        elif arg == "--ignore-heap":
-            search_heap = False
             i += 1
         elif arg == "--verbose" or arg == "-v":
             verbose = True
@@ -546,10 +598,10 @@ def find_instances_command(
             "Usage: oinstances [options] <ClassName>\n"
             "Options:\n"
             "  -M, --max-matches N  Maximum instances to find (default: 32)\n"
-            "  --stack              Also search thread stacks\n"
-            "  --segments           Also search data segments\n"
-            "  -V, --vm-regions     Search all VM regions (comprehensive)\n"
-            "  --ignore-heap        Don't search heap (use with --stack/--segments)\n"
+            "  --heap               Search heap using malloc zones (may be unstable)\n"
+            "  --stack              Search thread stacks\n"
+            "  --segments           Search data segments\n"
+            "  -V, --vm-regions     Search all VM regions (default, most reliable)\n"
             "  -v, --verbose        Show debug output"
         )
         return

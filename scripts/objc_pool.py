@@ -8,9 +8,10 @@ Usage: opool [--verbose] [ClassName]  # Find instances in autorelease pools
        opool --verbose                # Show full pool debug output
        opool --verbose NSString       # Show full pool debug output (filtered)
 
-This command scans autorelease pools. Without a class name, it dumps all objects.
-With a class name, it finds instances of the specified class.
-Use --verbose to show the raw pool contents from _objc_autoreleasePoolPrint().
+This command scans autorelease pools across ALL threads in the process.
+Without a class name, it dumps all objects. With a class name, it finds instances
+of the specified class. Use --verbose to show the raw pool contents from
+_objc_autoreleasePoolPrint() for each thread.
 """
 
 from __future__ import annotations
@@ -25,15 +26,16 @@ from objc_utils import evaluate_expression, register_command, require_stopped_pr
 _initialized = False
 
 
-def find_in_autorelease_pool(
-    frame: lldb.SBFrame, class_name: str | None = None, verbose: bool = False
+def find_in_autorelease_pool_single_thread(
+    frame: lldb.SBFrame, process: lldb.SBProcess, class_ptr: int, verbose: bool = False
 ) -> Tuple[List[Tuple[int, str]], str]:
     """
-    Find instances of a class by scanning autorelease pools.
+    Scan autorelease pools on a single thread.
 
     Args:
-        frame: Current stack frame for expression evaluation
-        class_name: Name of the class to search for, or None to dump all objects
+        frame: Stack frame for expression evaluation on this thread
+        process: The process (for reading memory)
+        class_ptr: Class pointer to filter by, or 0 for all objects
         verbose: If True, return the full pool contents
 
     Returns:
@@ -42,22 +44,8 @@ def find_in_autorelease_pool(
         pool_output: Raw pool output if verbose=True, empty string otherwise
     """
     instances = []
-    process = frame.GetThread().GetProcess()
 
-    # Step 1: Get the class pointer (if filtering by class)
-    class_ptr = 0
-    if class_name:
-        class_expr = f'(Class)NSClassFromString(@"{class_name}")'
-        class_result = evaluate_expression(frame, class_expr)
-
-        if not class_result.IsValid() or class_result.GetError().Fail():
-            return instances, ""
-
-        class_ptr = class_result.GetValueAsUnsigned()
-        if class_ptr == 0:
-            return instances, ""
-
-    # Step 2: Scan autorelease pools
+    # Scan autorelease pools on this thread
     # The _objc_autoreleasePoolPrint() function prints to stderr AND returns the string
     # We need to suppress the stderr output unless --verbose is specified
 
@@ -167,6 +155,94 @@ def find_in_autorelease_pool(
     return instances, pool_output
 
 
+def find_in_autorelease_pool(
+    process: lldb.SBProcess, class_name: str | None = None, verbose: bool = False
+) -> Tuple[List[Tuple[int, int, str]], str]:
+    """
+    Find instances of a class by scanning autorelease pools across all threads.
+
+    Args:
+        process: The process to scan
+        class_name: Name of the class to search for, or None to dump all objects
+        verbose: If True, return the full pool contents
+
+    Returns:
+        Tuple of (instances list, pool_output string)
+        instances: List of (thread_index, address, description) tuples for found instances
+        pool_output: Raw pool output if verbose=True, empty string otherwise
+    """
+    all_instances = []
+    all_pool_outputs = []
+
+    # Get the class pointer (if filtering by class)
+    # Use any thread's frame for this lookup
+    class_ptr = 0
+    if class_name:
+        thread = process.GetSelectedThread()
+        if not thread.IsValid():
+            return all_instances, ""
+
+        frame = thread.GetSelectedFrame()
+        if not frame.IsValid():
+            return all_instances, ""
+
+        class_expr = f'(Class)NSClassFromString(@"{class_name}")'
+        class_result = evaluate_expression(frame, class_expr)
+
+        if not class_result.IsValid() or class_result.GetError().Fail():
+            return all_instances, ""
+
+        class_ptr = class_result.GetValueAsUnsigned()
+        if class_ptr == 0:
+            return all_instances, ""
+
+    # Save the originally selected thread so we can restore it
+    original_thread = process.GetSelectedThread()
+
+    # Iterate through all threads
+    num_threads = process.GetNumThreads()
+    threads_scanned = 0
+    threads_with_pools = 0
+
+    for thread_idx in range(num_threads):
+        thread = process.GetThreadAtIndex(thread_idx)
+        if not thread.IsValid():
+            continue
+
+        frame = thread.GetSelectedFrame()
+        if not frame.IsValid():
+            continue
+
+        threads_scanned += 1
+
+        # CRITICAL: Set this thread as selected so expressions execute on it
+        # _objc_autoreleasePoolPrint() is thread-local and only shows the calling thread's pools
+        process.SetSelectedThread(thread)
+
+        # Scan this thread's autorelease pools
+        instances, pool_output = find_in_autorelease_pool_single_thread(frame, process, class_ptr, verbose)
+
+        # Add thread index to each instance
+        for addr, description in instances:
+            all_instances.append((thread_idx, addr, description))
+
+        if pool_output:
+            threads_with_pools += 1
+            all_pool_outputs.append(f"Thread #{thread_idx}:\n{pool_output}")
+
+    # Restore the originally selected thread
+    if original_thread.IsValid():
+        process.SetSelectedThread(original_thread)
+
+    # Add debug summary if verbose
+    if verbose and len(all_instances) == 0:
+        summary = f"\nScanned {threads_scanned}/{num_threads} threads, {threads_with_pools} had pool data"
+        all_pool_outputs.append(summary)
+
+    combined_output = "\n".join(all_pool_outputs) if all_pool_outputs else ""
+    return all_instances, combined_output
+
+
 def find_pool_instances_command(
     debugger: lldb.SBDebugger,
     command: str,
@@ -195,8 +271,8 @@ def find_pool_instances_command(
     # Get class name (optional)
     class_name = args[0] if args else None
 
-    # Find instances in autorelease pools
-    instances, pool_output = find_in_autorelease_pool(frame, class_name, verbose)
+    # Find instances in autorelease pools across all threads
+    instances, pool_output = find_in_autorelease_pool(process, class_name, verbose)
 
     # Show pool output if verbose
     if verbose and pool_output:
@@ -211,7 +287,7 @@ def find_pool_instances_command(
         return
 
     # Display results
-    for addr, description in instances:
+    for thread_idx, addr, description in instances:
         # Get the actual class of this instance
         class_expr = f"(const char *)class_getName((Class)object_getClass((id)0x{addr:x}))"
         class_result = evaluate_expression(frame, class_expr)
@@ -229,8 +305,8 @@ def find_pool_instances_command(
         if len(description) > 100:
             description = description[:97] + "..."
 
-        # Dim address (gray), then actual class, then description
-        print(f"{ANSI_DIM}0x{addr:016x}{ANSI_RESET}  {actual_class}  {description}")
+        # Show thread number, dim address (gray), then actual class, then description
+        print(f"{ANSI_DIM}Thread #{thread_idx}  0x{addr:016x}{ANSI_RESET}  {actual_class}  {description}")
 
     result.SetStatus(lldb.eReturnStatusSuccessFinishResult)
 
