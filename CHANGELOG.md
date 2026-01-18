@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-01-18
+
 ### Added
 - **`oinstances` command**: Efficiently find class instances in memory
   - Scans heap memory for instances of specified class (including subclasses)
@@ -169,7 +171,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Supports both instance methods (`-`) and class methods (`+`)
 - LLDB Python scripting API
 
-[Unreleased]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.3.2...HEAD
+[Unreleased]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.2.3...v1.3.0
