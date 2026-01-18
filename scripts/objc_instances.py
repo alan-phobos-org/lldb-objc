@@ -380,7 +380,8 @@ if (KERN_SUCCESS == err && num_zones > 0 && num_zones < 100) {
                                          range_callback_t callback = ((callback_baton_t *)baton)->callback;
                                          for (unsigned i=0; i<size; ++i) {
                                              // Skip ranges with invalid addresses or sizes
-                                             if (ranges[i].address == 0 || ranges[i].size == 0 || ranges[i].size > 0x100000000ULL)
+                                             if (ranges[i].address == 0 || ranges[i].size == 0 ||
+                                                ranges[i].size > 0x100000000ULL)
                                                  continue;
                                              callback(task, baton, type, ranges[i].address, ranges[i].size);
                                          }

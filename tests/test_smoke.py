@@ -78,6 +78,9 @@ okeychain extract /tmp/lldb-objc-smoke-keychain.plist --raw
 script print("=== SMOKE TEST: osbx ===")
 osbx
 
+script print("=== SMOKE TEST: omemlayout ===")
+omemlayout
+
 script print("=== CLEANUP: Remove extracted keychain files ===")
 script import os, shutil
 script if os.path.exists("/tmp/lldb-objc-smoke-keychain.plist"): os.remove("/tmp/lldb-objc-smoke-keychain.plist")
@@ -162,6 +165,7 @@ quit
             "SMOKE TEST: okeychain",
             "SMOKE TEST: okeychain extract",
             "SMOKE TEST: osbx",
+            "SMOKE TEST: omemlayout",
         ]
 
         for test in expected_tests:
@@ -181,6 +185,7 @@ quit
             "oinstance": "Instance Variables",  # Should show instance info
             "oentitlements": "Process Entitlements",  # Should show entitlements
             "osbx": "Sandbox Writable Path Scan",  # Should run sandbox scan
+            "omemlayout": "STACKS",  # Should show stack information
         }
 
         for cmd, expected_pattern in validations.items():

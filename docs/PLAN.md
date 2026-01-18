@@ -14,7 +14,7 @@ The `oinstances` command efficiently scans memory for class instances using heap
 
 ## TODO
 
-### v1.5 
+### v1.6
 
 Bugs:
 
@@ -23,7 +23,6 @@ Bugs:
 
 Feat:
 
-* Make HelloWorld binaries more representative to test opool and oinstances a bit better
-* Build test-smoke set up for testing against iPhone
+* `omemlayout` needs pimping - ralph loop
 * Re-optimise ocls - lots of experiments needed and probably 2/3 strategies to try on real-world examples (need test iPhone)
 * ocls --selectors to list all and where from

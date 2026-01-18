@@ -44,6 +44,7 @@ COMMAND_MODULES = [
     ".objc_dump",
     ".objc_entitlements",
     ".objc_keychain",
+    ".objc_memlayout",
 ]
 
 # Track loaded modules for reloading
