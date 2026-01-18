@@ -73,7 +73,7 @@ Smoke tests and some integration tests attach to system processes (e.g., `apsd`)
 |---------|--------|
 | Before any commit | `./build.sh check` |
 | "what's next", "status" | `./build.sh status` → read `docs/PLAN.md` → summarize (10-15 lines) |
-| "prepare release" | `./build.sh prepare-release` → update CHANGELOG.md → `./build.sh release X.Y.Z` → push |
+| "prepare release", "cut release" | `./build.sh status` → **verify CI passing** → fix if needed → update CHANGELOG.md + version.py + PLAN.md → commit → tag → push |
 | Development reload | `oreload` in LLDB session |
 | Install locally | `./install.py` |
 
@@ -191,4 +191,16 @@ See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#adding-commands).
 
 ## Release Process [READ IF: user explicitly requests release]
 
-See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#release-process).
+**CRITICAL**: Always check CI status before cutting a release.
+
+1. **Check CI status**: `./build.sh status`
+   - Verify latest commits show "success" in CI Status section
+   - If any failures: fix them first, commit, push, wait for CI, repeat
+2. **Update files**:
+   - `CHANGELOG.md`: Add version section with changes since last release
+   - `scripts/version.py`: Update `_FALLBACK_VERSION` to new version
+   - `docs/PLAN.md`: Update "Current Stage" to new version
+3. **Create release**:
+   - Commit changes (NO AI mentions, see CRITICAL section above)
+   - Tag: `git tag -a vX.Y.Z -m "Release vX.Y.Z\n\n<brief summary>"`
+   - Push: `git push origin main && git push origin vX.Y.Z`
