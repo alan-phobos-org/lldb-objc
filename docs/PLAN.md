@@ -24,6 +24,10 @@ Bugs:
 
 * owatch shouldn't need - on selectors
 * owatch `NameError: name 'extra_args' is not defined`
+* okeychain: iOS fails with 'use of undeclared identifier SecKeychainOpen' - SecKeychainOpen is macOS-only, iOS has no keychain files
+* okeychain: iOS fails with 'SecItemCopyMatching has unknown return type' - needs explicit cast or import
+* opool: `ReadCStringFromMemory` returns NULL without error on iOS when _objc_autoreleasePoolPrint() returns invalid data
+* oentitlements: XML parsing fails with "not well-formed invalid token" - entitlements data may have trailing null bytes or garbage
 
 Feat:
 

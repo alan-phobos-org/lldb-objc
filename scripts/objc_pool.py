@@ -70,16 +70,28 @@ def find_in_autorelease_pool_single_thread(
     pool_result = evaluate_expression(frame, pool_expr)
 
     if not pool_result.IsValid() or pool_result.GetError().Fail():
+        if verbose:
+            error_msg = pool_result.GetError().GetCString() if pool_result.IsValid() else "invalid result"
+            print(f"[DEBUG] _objc_autoreleasePoolPrint failed: {error_msg}")
         return instances, ""
 
     pool_addr = pool_result.GetValueAsUnsigned()
     if pool_addr == 0:
+        if verbose:
+            print("[DEBUG] _objc_autoreleasePoolPrint returned NULL pointer")
         return instances, ""
 
     error = lldb.SBError()
     pool_info = process.ReadCStringFromMemory(pool_addr, 1000000, error)
 
-    if not error.Success() or not pool_info:
+    if error.Fail():
+        if verbose:
+            print(f"[DEBUG] ReadCStringFromMemory failed: {error.GetCString()}")
+        return instances, ""
+
+    if not pool_info:
+        if verbose:
+            print("[DEBUG] ReadCStringFromMemory returned empty string (pool may be empty or pointer invalid)")
         return instances, ""
 
     pool_output = pool_info if verbose else ""

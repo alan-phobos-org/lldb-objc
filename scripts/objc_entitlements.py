@@ -222,11 +222,29 @@ def extract_entitlements(frame: lldb.SBFrame, verbose: bool = False) -> Tuple[Op
     if entitlements_xml is None:
         return None, error
 
+    # Clean up the entitlements data before parsing
+    # The data from csops may have trailing null bytes or garbage
+    # Strip trailing nulls
+    entitlements_xml = entitlements_xml.rstrip(b'\x00')
+
+    # Find the end of the XML (</plist>) and truncate anything after
+    # This handles cases where there's garbage data after the XML
+    plist_end = entitlements_xml.rfind(b'</plist>')
+    if plist_end != -1:
+        entitlements_xml = entitlements_xml[:plist_end + len(b'</plist>')]
+
+    if verbose:
+        print(f"[DEBUG] Entitlements XML length after cleanup: {len(entitlements_xml)}")
+
     # Parse the XML plist
     try:
         entitlements = plistlib.loads(entitlements_xml)
         return entitlements, None
     except Exception as e:
+        if verbose:
+            # Show first 200 bytes of data for debugging
+            preview = entitlements_xml[:200]
+            print(f"[DEBUG] Failed to parse XML. First 200 bytes: {preview!r}")
         return None, f"Failed to parse entitlements XML: {e}"
 
 

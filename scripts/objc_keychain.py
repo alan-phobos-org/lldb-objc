@@ -879,20 +879,36 @@ def _query_all_keychain_items_fast(
 
     # Build a single expression that queries all classes and serializes to plist
     # Use unique variable names with prefix to avoid symbol conflicts
+    # Note: We typedef OSStatus explicitly because LLDB on iOS may not recognize it
+    # from @import Security alone
     expr = """
     @import Foundation;
     @import Security;
+
+    // Ensure OSStatus is defined (LLDB on iOS may not pick it up from @import)
+    typedef int32_t OSStatus;
 
     NSMutableArray *lldb_okeychain_all_items = [NSMutableArray array];
     NSMutableArray *lldb_okeychain_search_list = nil;
 
     """
 
-    # Add code to open process-specific keychain if needed
+    # Add code to open process-specific keychain if needed (macOS only)
+    # SecKeychainOpen is not available on iOS - iOS uses a single unified keychain
+    # accessed via SecItemCopyMatching without needing to specify a keychain file
     if keychain_path:
-        # Use raw string for path to avoid escaping issues
-        expr += f"""
-    // Open process-specific keychain
+        # Check if this is iOS by looking at the target triple
+        triple = target.GetTriple()
+        is_ios = "ios" in triple.lower() or "arm64-apple-darwin" in triple.lower()
+
+        if is_ios:
+            if verbose:
+                print(f"[DEBUG] iOS detected (triple: {triple}), skipping SecKeychainOpen")
+                print("[DEBUG] iOS uses a unified keychain - --keychain option ignored")
+        else:
+            # Use raw string for path to avoid escaping issues
+            expr += f"""
+    // Open process-specific keychain (macOS only)
     SecKeychainRef lldb_kc_specific_keychain = NULL;
     OSStatus lldb_kc_open_status = SecKeychainOpen("{keychain_path}", &lldb_kc_specific_keychain);
 
