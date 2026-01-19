@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 # Fallback version (used when not in git repo, e.g., packaged release)
-_FALLBACK_VERSION = "1.5.0"
+_FALLBACK_VERSION = "1.5.1"
 
 
 def _get_git_version():

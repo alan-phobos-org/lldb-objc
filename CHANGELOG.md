@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-01-19
+
+### Fixed
+- **`okeychain` iOS compatibility**: Skip `SecKeychainOpen` on iOS (macOS-only API)
+  - Detects iOS via target triple and skips keychain file opening
+  - Added explicit `OSStatus` typedef for LLDB expression compatibility on iOS
+- **`opool` iOS error handling**: Improved handling when `_objc_autoreleasePoolPrint()` returns NULL
+  - Better verbose debug output for troubleshooting autorelease pool issues
+  - Separated error checks for clearer failure diagnostics
+- **`oentitlements` XML parsing**: Fixed "not well-formed invalid token" errors
+  - Strips trailing null bytes from entitlements data before parsing
+  - Truncates data after `</plist>` to remove garbage/padding
+  - Added verbose debug output showing first 200 bytes on parse failure
+
 ## [1.5.0] - 2026-01-19
 
 ### Added
@@ -197,7 +211,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Supports both instance methods (`-`) and class methods (`+`)
 - LLDB Python scripting API
 
-[Unreleased]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/alan-phobos-org/lldb-objc/compare/v1.3.1...v1.3.2
