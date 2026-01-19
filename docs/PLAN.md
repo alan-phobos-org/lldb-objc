@@ -4,13 +4,17 @@
 
 A comprehensive set of LLDB commands for Objective-C runtime introspection, making it easy to debug and explore any Objective-C code including private frameworks.
 
-## Current Stage: v1.3 (Stable)
+## Current Stage: v1.5 (Stable)
 
-9 commands covering core debugging use cases: `obrk`, `osel`, `ocls`, `ocall`, `owatch`, `opool`, `oinstance`, `oinstances`, `osbx`.
+13 commands covering core debugging use cases: `obrk`, `osel`, `ocls`, `ocall`, `owatch`, `opool`, `oinstance`, `oinstances`, `osbx`, `odump`, `oentitlements`, `okeychain`, `omemlayout`.
 
 Standalone sandbox scanner binary available at `tools/osbx-standalone/`.
 
 The `oinstances` command efficiently scans memory for class instances using heap.py's optimized techniques.
+
+The `omemlayout` command displays process memory layout including stacks, heap regions, and shared memory.
+
+The `okeychain` command provides keychain introspection with automatic process-specific keychain detection.
 
 ## TODO
 
