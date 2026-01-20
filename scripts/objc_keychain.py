@@ -565,7 +565,7 @@ def _query_keychain_class(
     query_{class_value}[(id)kSecUseAuthenticationUI] = (id)kSecUseAuthenticationUISkip;
 
     CFTypeRef result_{class_value} = NULL;
-    OSStatus status_{class_value} = SecItemCopyMatching((CFDictionaryRef)query_{class_value}, &result_{class_value});
+    OSStatus status_{class_value} = (OSStatus)SecItemCopyMatching((CFDictionaryRef)query_{class_value}, &result_{class_value});
 
     (NSArray *)result_{class_value};
     """
@@ -910,7 +910,7 @@ def _query_all_keychain_items_fast(
             expr += f"""
     // Open process-specific keychain (macOS only)
     SecKeychainRef lldb_kc_specific_keychain = NULL;
-    OSStatus lldb_kc_open_status = SecKeychainOpen("{keychain_path}", &lldb_kc_specific_keychain);
+    OSStatus lldb_kc_open_status = (OSStatus)SecKeychainOpen("{keychain_path}", &lldb_kc_specific_keychain);
 
     if (lldb_kc_open_status == 0 && lldb_kc_specific_keychain != NULL) {{
         lldb_okeychain_search_list = [NSMutableArray arrayWithObject:(__bridge id)lldb_kc_specific_keychain];
@@ -947,7 +947,7 @@ def _query_all_keychain_items_fast(
         }
 
         CFTypeRef lldb_kc_query_result = NULL;
-        OSStatus lldb_kc_status = SecItemCopyMatching((CFDictionaryRef)lldb_kc_query, &lldb_kc_query_result);
+        OSStatus lldb_kc_status = (OSStatus)SecItemCopyMatching((CFDictionaryRef)lldb_kc_query, &lldb_kc_query_result);
 
         if (lldb_kc_status == 0 && lldb_kc_query_result != NULL) {
             NSArray *lldb_kc_items = (NSArray *)lldb_kc_query_result;
