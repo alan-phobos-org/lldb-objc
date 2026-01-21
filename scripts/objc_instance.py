@@ -31,7 +31,7 @@ except ImportError:
     def get_class_hierarchy(frame: lldb.SBFrame, class_name: str) -> List[str]:
         return [class_name]
 
-    def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Tuple[str, str, int]]:
+    def get_class_ivars(frame: lldb.SBFrame, class_name: str) -> List[Dict[str, str]]:
         return []
 
     def decode_type_encoding(type_enc: str) -> str:
