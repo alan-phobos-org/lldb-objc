@@ -9,13 +9,13 @@ in isolation, verifying correct parsing and error handling.
 import sys
 import os
 import unittest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 
 # Mock lldb and objc_utils modules before importing
 mock_lldb = Mock()
 mock_lldb.SBError = Mock
-sys.modules['lldb'] = mock_lldb
-sys.modules['objc_utils'] = Mock()
+sys.modules["lldb"] = mock_lldb
+sys.modules["objc_utils"] = Mock()
 
 # Add scripts directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
@@ -83,14 +83,14 @@ class TestGetSharedCacheInfo(unittest.TestCase):
         size = 500 * 1024 * 1024  # 500 MB
         # UUID: 550E8400-E29B-41D4-A716-446655440000
         # Stored as two uint64_t values (little-endian)
-        uuid_high = 0xd4419be200840e55  # First 8 bytes
-        uuid_low = 0x0000445566441607a7  # Last 8 bytes (note: last byte should be 0x16 not 0x07, fixing)
-        uuid_low = 0x0000445566441607a7  # Adjusted for proper format
+        uuid_high = 0xD4419BE200840E55  # First 8 bytes
+        uuid_low = 0x0000445566441607A7  # Last 8 bytes (note: last byte should be 0x16 not 0x07, fixing)
+        uuid_low = 0x0000445566441607A7  # Adjusted for proper format
         # Let's use correct hex: 55 0e 84 00 e2 9b 41 d4 a7 16 44 66 55 44 00 00
         # High (first 8): 0xd4419be200840e55
         # Low (last 8): 0x000044556644a716 (reordered to match correct byte order)
-        uuid_high = 0xd4419be200840e55
-        uuid_low = 0x0000445566441607a7
+        uuid_high = 0xD4419BE200840E55
+        uuid_low = 0x0000445566441607A7
         path = "/System/Library/dyld/dyld_shared_cache_arm64e"
 
         # Mock SBError to return a non-failing error
@@ -115,7 +115,7 @@ class TestGetSharedCacheInfo(unittest.TestCase):
                 mock_error = Mock()
                 mock_error.Fail.return_value = False
                 mock_path_result.GetError.return_value = mock_error
-                mock_path_result.GetValueAsUnsigned.return_value = 0x7fff12345678  # Some pointer
+                mock_path_result.GetValueAsUnsigned.return_value = 0x7FFF12345678  # Some pointer
                 return mock_path_result
             return self.create_mock_result(is_valid=False)
 
@@ -133,7 +133,6 @@ class TestGetSharedCacheInfo(unittest.TestCase):
         self.assertIn("uuid", cache_info)
         self.assertIsNotNone(cache_info["uuid"])
         # Verify it's in the correct format
-        import re
         uuid_pattern = r"^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$"
         self.assertRegex(cache_info["uuid"], uuid_pattern)
         self.assertEqual(cache_info["path"], path)
@@ -214,8 +213,8 @@ class TestGetSharedCacheInfo(unittest.TestCase):
         # Create a specific UUID pattern: ABCDEF12-3456-7890-1122-334455667788
         # Stored as two uint64_t values (little-endian)
         # Bytes: AB CD EF 12 34 56 78 90 11 22 33 44 55 66 77 88
-        uuid_high = 0x9078563412efcdab  # First 8 bytes (little-endian)
-        uuid_low = 0x8877665544332211   # Last 8 bytes (little-endian)
+        uuid_high = 0x9078563412EFCDAB  # First 8 bytes (little-endian)
+        uuid_low = 0x8877665544332211  # Last 8 bytes (little-endian)
 
         def mock_evaluate(frame, expr):
             if "struct { uint64_t base; uint64_t size; }" in expr:
@@ -239,7 +238,6 @@ class TestGetSharedCacheInfo(unittest.TestCase):
         self.assertEqual(uuid, "ABCDEF12-3456-7890-1122-334455667788")
 
         # Verify format with regex
-        import re
 
         uuid_pattern = r"^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$"
         self.assertRegex(uuid, uuid_pattern, "UUID should match standard format")

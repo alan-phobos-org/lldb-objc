@@ -10,3 +10,5 @@ select = ["E", "F", "W"]
 # These scripts have imports after try/except version blocks which is intentional
 "scripts/objc_*.py" = ["E402"]
 "scripts/__init__.py" = ["E402"]
+# Test files need to mock LLDB before importing modules
+"tests/test_*_unit.py" = ["E402"]

@@ -174,7 +174,11 @@ def validate_cache_slide():
         # Verify slide calculation: actual_base = preferred_base + slide
         expected_actual = preferred_base + slide
         if actual_base != expected_actual:
-            return False, f"Slide calculation error: 0x{actual_base:x} != 0x{preferred_base:x} + 0x{slide:x} (0x{expected_actual:x})"
+            msg = (
+                f"Slide calculation error: 0x{actual_base:x} != "
+                f"0x{preferred_base:x} + 0x{slide:x} (0x{expected_actual:x})"
+            )
+            return False, msg
 
         # Verify preferred base is reasonable for the platform
         # arm64/arm64e: typically 0x180000000

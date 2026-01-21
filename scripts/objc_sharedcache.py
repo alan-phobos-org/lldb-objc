@@ -76,8 +76,12 @@ def get_shared_cache_info(frame: lldb.SBFrame, verbose: bool = False) -> Tuple[O
     result_high = evaluate_expression(frame, expr_uuid_high)
     result_low = evaluate_expression(frame, expr_uuid_low)
 
-    if result_high.IsValid() and result_low.IsValid() and \
-       not result_high.GetError().Fail() and not result_low.GetError().Fail():
+    if (
+        result_high.IsValid()
+        and result_low.IsValid()
+        and not result_high.GetError().Fail()
+        and not result_low.GetError().Fail()
+    ):
         uuid_high = result_high.GetValueAsUnsigned(0)
         uuid_low = result_low.GetValueAsUnsigned(0)
 
@@ -90,8 +94,13 @@ def get_shared_cache_info(frame: lldb.SBFrame, verbose: bool = False) -> Tuple[O
                 uuid_bytes.append((uuid_low >> (i * 8)) & 0xFF)
 
             # Format as standard UUID string
-            uuid_str = "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}".format(
-                *uuid_bytes
+            uuid_str = (
+                f"{uuid_bytes[0]:02x}{uuid_bytes[1]:02x}{uuid_bytes[2]:02x}{uuid_bytes[3]:02x}-"
+                f"{uuid_bytes[4]:02x}{uuid_bytes[5]:02x}-"
+                f"{uuid_bytes[6]:02x}{uuid_bytes[7]:02x}-"
+                f"{uuid_bytes[8]:02x}{uuid_bytes[9]:02x}-"
+                f"{uuid_bytes[10]:02x}{uuid_bytes[11]:02x}{uuid_bytes[12]:02x}"
+                f"{uuid_bytes[13]:02x}{uuid_bytes[14]:02x}{uuid_bytes[15]:02x}"
             )
             cache_info["uuid"] = uuid_str.upper()
 
@@ -224,13 +233,13 @@ def show_shared_cache_info(
 
     # Address range
     if "base" in cache_info and "end" in cache_info:
-        base = cache_info['base']
-        end = cache_info['end']
+        base = cache_info["base"]
+        end = cache_info["end"]
         print(f"  Range:            {ANSI_DIM}0x{base:016x} - 0x{end:016x}{ANSI_RESET}")
 
     # Calculate and display slide
     if "base" in cache_info:
-        base = cache_info['base']
+        base = cache_info["base"]
         shared_region_start = get_shared_region_start(frame, base, verbose)
 
         if shared_region_start:
