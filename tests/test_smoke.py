@@ -81,6 +81,9 @@ osbx
 script print("=== SMOKE TEST: omemlayout ===")
 omemlayout
 
+script print("=== SMOKE TEST: osc ===")
+osc
+
 script print("=== CLEANUP: Remove extracted keychain files ===")
 script import os, shutil
 script if os.path.exists("/tmp/lldb-objc-smoke-keychain.plist"): os.remove("/tmp/lldb-objc-smoke-keychain.plist")
@@ -166,6 +169,7 @@ quit
             "SMOKE TEST: okeychain extract",
             "SMOKE TEST: osbx",
             "SMOKE TEST: omemlayout",
+            "SMOKE TEST: osc",
         ]
 
         for test in expected_tests:
@@ -186,6 +190,7 @@ quit
             "oentitlements": "Process Entitlements",  # Should show entitlements
             "osbx": "Sandbox Writable Path Scan",  # Should run sandbox scan
             "omemlayout": "STACKS",  # Should show stack information
+            "osc": "Base Address:",  # Should show shared cache base address
         }
 
         for cmd, expected_pattern in validations.items():

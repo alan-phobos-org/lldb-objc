@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`osc` command**: Display dyld shared cache information
+  - Shows base address, size, and end address of the shared cache
+  - Displays UUID for the shared cache build
+  - Shows file path to the shared cache on disk
+  - Reports loaded address with ASLR slide applied
+  - Verbose debug mode with `--verbose` flag
+- **`osc` test suite**: Comprehensive testing for dyld shared cache functionality
+  - Unit tests with mocked LLDB objects (`test_osc_unit.py`)
+  - Integration tests validating cache slide and address correctness (`test_osc.py`)
+  - Smoke test integration for quick validation
+  - Validates addresses are page-aligned and in valid memory ranges
+  - Verifies UUID format and address consistency (end = base + size)
+  - Tests verbose debug output
+
+### Changed
+- **`install.py` dynamic command discovery**: Installation now automatically detects and lists all available commands
+  - Parses `COMMAND_MODULES` from `__init__.py` to discover command modules
+  - Extracts command names and descriptions from `register_command()` calls
+  - No longer requires manual updates when new commands are added
+  - Displays all commands alphabetically with aligned formatting
+  - Removed hardcoded list of command modules from installer
+
+### Fixed
+- **`osc` expression syntax**: Fixed compatibility with newer LLDB/Clang versions
+  - Removed inline struct type definitions from cast expressions
+  - Now uses compound statements without explicit casts for better compatibility
+  - Fixes "cannot be defined in a type specifier" errors on LLDB 14+
+
 ## [1.5.1] - 2026-01-19
 
 ### Fixed

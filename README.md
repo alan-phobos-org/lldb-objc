@@ -15,6 +15,7 @@ Custom LLDB commands for working with Objective-C methods, including private sym
 - **odump**: Dump NSData contents or raw memory to a file
 - **oentitlements**: Extract and display process entitlements in human-readable format
 - **okeychain**: Query and list keychain items accessible to the process
+- **osc**: Display dyld shared cache information (base address, size, UUID, path)
 - Works with private classes and methods
 - Supports both instance methods (`-`) and class methods (`+`)
 - Runtime resolution using `NSClassFromString`, `NSSelectorFromString`, and `class_getMethodImplementation`
@@ -32,6 +33,8 @@ cd /path/to/lldb-objc
 ```
 
 Scripts are installed to `~/.lldb-objc/scripts/` for a stable path. The commands will be available automatically whenever you start LLDB.
+
+The installer automatically discovers and lists all available commands - no manual updates needed when new commands are added.
 
 **Installation Commands:**
 ```bash
@@ -464,6 +467,54 @@ Class: inet
 - Use `oentitlements` to see which keychain-access-groups the process can access
 - Useful for debugging keychain access issues and understanding what data is stored
 - The device must be unlocked for keychain access
+- Works on both iOS and macOS
+
+### osc - Dyld Shared Cache Information
+
+Display information about the dyld shared cache used by the current process.
+
+**Syntax:**
+```
+osc              # Show shared cache info
+osc --verbose    # Show detailed debug info
+```
+
+**Examples:**
+```
+# Display shared cache information
+osc
+
+# Show with debug output
+osc --verbose
+```
+
+**Output:**
+```
+Dyld Shared Cache Information:
+======================================================================
+Base Address:     0x00007ff800000000
+End Address:      0x00007ff84a0c0000
+Size:             1.16 GB (1,241,513,984 bytes)
+UUID:             550E8400-E29B-41D4-A716-446655440000
+File Path:        /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_x86_64h
+
+Loaded at:        0x00007ff800000000 (with ASLR slide applied)
+======================================================================
+```
+
+**Information Displayed:**
+- **Base Address**: Memory address where the shared cache is loaded
+- **End Address**: End of the shared cache in memory
+- **Size**: Total size of the shared cache (formatted as GB/MB/KB)
+- **UUID**: Unique identifier for this shared cache build
+- **File Path**: Location of the shared cache file on disk
+- **ASLR Slide**: The base address includes the ASLR slide applied at load time
+
+**Notes:**
+- The dyld shared cache contains pre-linked system frameworks for faster app launch
+- On macOS Ventura+, the cache is located at `/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/`
+- The UUID uniquely identifies the cache build and can be used to match symbols
+- Useful for understanding memory layout and verifying which shared cache version is in use
 - Works on both iOS and macOS
 
 ## How It Works

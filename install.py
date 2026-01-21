@@ -93,6 +93,79 @@ def remove_existing_section(content):
     return "\n".join(result)
 
 
+def get_available_commands():
+    """
+    Dynamically discover all available commands by parsing command modules.
+
+    Returns a list of tuples: (command_name, description)
+    """
+    try:
+        # Import __init__.py to get COMMAND_MODULES list
+        init_module_path = SOURCE_SCRIPTS_DIR / "__init__.py"
+        if not init_module_path.exists():
+            return []
+
+        # Parse __init__.py to extract COMMAND_MODULES
+        init_content = init_module_path.read_text()
+
+        # Extract command module names from COMMAND_MODULES list
+        import re
+        modules_match = re.search(
+            r'COMMAND_MODULES\s*=\s*\[(.*?)\]',
+            init_content,
+            re.DOTALL
+        )
+
+        if not modules_match:
+            return []
+
+        # Parse module names (remove leading dots and quotes)
+        module_names = []
+        for line in modules_match.group(1).split('\n'):
+            line = line.strip()
+            if line.startswith('"') or line.startswith("'"):
+                # Extract module name: ".objc_breakpoint" -> "objc_breakpoint"
+                module_name = line.strip('",\'').lstrip('.')
+                if module_name:
+                    module_names.append(module_name)
+
+        # Extract command info from each module
+        commands = []
+        for module_name in module_names:
+            module_path = SOURCE_SCRIPTS_DIR / f"{module_name}.py"
+            if not module_path.exists():
+                continue
+
+            try:
+                content = module_path.read_text()
+
+                # Find register_command call
+                # Pattern: register_command(debugger, "cmd_name", ..., "description", ...)
+                pattern = r'register_command\s*\(\s*[^,]+,\s*["\']([^"\']+)["\'][^,]*,[^,]*,[^,]*,\s*["\']([^"\']+)["\']'
+                match = re.search(pattern, content, re.MULTILINE | re.DOTALL)
+
+                if match:
+                    cmd_name = match.group(1)
+                    description = match.group(2)
+                    commands.append((cmd_name, description))
+
+            except Exception:
+                # Skip modules that can't be parsed
+                continue
+
+        # Sort by command name for consistent output
+        commands.sort(key=lambda x: x[0])
+
+        # Add oreload (registered in __init__.py, not a separate module)
+        commands.append(("oreload", "Reload all commands (useful for development)"))
+
+        return commands
+
+    except Exception:
+        # Fallback to empty list if parsing fails
+        return []
+
+
 def install():
     """Install the LLDB commands to ~/.lldb-objc and update .lldbinit."""
     print(f"Installing LLDB Objective-C Tools v{__version__}...")
@@ -100,23 +173,16 @@ def install():
     print(f"Install to: {INSTALL_DIR}")
     print(f"LLDB config: {LLDBINIT_PATH}")
 
-    # Verify source scripts directory and required files exist
+    # Verify source scripts directory exists
     if not SOURCE_SCRIPTS_DIR.exists():
         print(f"Error: Scripts directory not found: {SOURCE_SCRIPTS_DIR}", file=sys.stderr)
         return False
 
+    # Verify core files exist
     required_files = [
         "__init__.py",
-        "objc_breakpoint.py",
-        "objc_sel.py",
-        "objc_cls.py",
-        "objc_call.py",
-        "objc_watch.py",
-        "objc_pool.py",
-        "objc_instance.py",
         "objc_utils.py",
         "objc_core.py",
-        "objc_sandbox.py",
         "version.py",
     ]
 
@@ -153,16 +219,18 @@ def install():
     write_lldbinit(content)
 
     print("\nInstallation complete!")
-    print("\nThe following commands are now available in LLDB:")
-    print("  obrk       - Set breakpoints on Objective-C methods")
-    print("  osel       - Find selectors in Objective-C classes")
-    print("  ocls       - Find Objective-C classes by pattern")
-    print("  ocall      - Call Objective-C methods from the command line")
-    print("  owatch     - Set auto-logging breakpoints (method watcher)")
-    print("  opool      - Find instances in autorelease pools")
-    print("  oinstance  - Inspect Objective-C object instances")
-    print("  osbx       - Show sandbox restrictions for process")
-    print("  oreload    - Reload all commands (useful for development)")
+
+    # Dynamically display available commands
+    commands = get_available_commands()
+    if commands:
+        print("\nThe following commands are now available in LLDB:")
+        # Find the longest command name for alignment
+        max_cmd_len = max(len(cmd) for cmd, _ in commands)
+        for cmd_name, description in commands:
+            print(f"  {cmd_name:<{max_cmd_len}}  - {description}")
+    else:
+        print("\nCommands have been installed.")
+
     print("\nStart LLDB to use the commands.")
 
     return True

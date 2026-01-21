@@ -53,6 +53,13 @@ tests/
 ├── test_osel.py          # osel command tests
 ├── test_ocall.py         # ocall command tests
 ├── test_owatch.py        # owatch command tests
+├── test_opool.py         # opool command tests
+├── test_oinstance.py     # oinstance command tests
+├── test_odump.py         # odump command tests
+├── test_oentitlements.py # oentitlements command tests
+├── test_okeychain.py     # okeychain command tests
+├── test_osc.py           # osc command tests (shared cache)
+├── test_osc_unit.py      # osc unit tests with mocking
 ├── test_hierarchy.py     # Class hierarchy display tests
 ├── test_ivars_props.py   # --ivars/--properties tests
 ├── test_osel_perf.py     # osel performance tests
@@ -60,6 +67,7 @@ tests/
 ├── test_bootstrap.py     # Interactive LLDB setup
 ├── test_osbx.py          # osbx command tests
 ├── test_osbx_sandboxed.py # osbx tests with sandboxed binary
+├── test_smoke.py         # Quick smoke tests
 └── unit/
     ├── test_objc_core.py # objc_core.py tests
     ├── test_objc_sandbox.py # sandbox utilities tests

@@ -39,6 +39,7 @@ TEST_FILES = [
     "test_odump.py",
     "test_oentitlements.py",
     "test_okeychain.py",
+    "test_osc.py",
     "test_hierarchy.py",
     "test_ivars_props.py",
     "test_osel_perf.py",

@@ -6,6 +6,12 @@ LLDB commands for Objective-C runtime introspection, including private classes/m
 
 Commands that feel like native debugger features, not bolted-on scripts. Output should be scannable at a glance - primary info prominent, secondary details muted. Fast enough to run speculatively. Error messages should suggest what the user probably meant. Handle edge cases gracefully (nil objects, swizzled methods, stripped binaries) rather than crashing or producing confusing output.
 
+## Critical Concerns
+
+* Support both MacOS and iOS
+* Support remote debugging via `debugserver`
+* Style command output consistently and elegantly (with bright/dim contrast as appropriate)
+
 ## Documentation
 
 | Document | Purpose | Read When |
@@ -64,6 +70,7 @@ Smoke tests and some integration tests attach to system processes (e.g., `apsd`)
 | `oinstance` | Inspect object | `oinstance $0` |
 | `oinstances` | Find class instances in memory | `oinstances NSString` |
 | `okeychain` | Query keychain items | `okeychain list --keychain=/path.db` |
+| `osc` | Show dyld shared cache info | `osc`, `osc --verbose` |
 | `osbx` | Scan sandbox writable paths | `osbx --thorough` |
 | `oreload` | Reload commands | `oreload` |
 
@@ -125,6 +132,7 @@ docs/                 # Design documents and guides
 - [scripts/objc_keychain.py](scripts/objc_keychain.py) - The `okeychain` command for querying keychain items
 - [scripts/objc_pool.py](scripts/objc_pool.py) - The `opool` command for scanning autorelease pools
 - [scripts/objc_instances.py](scripts/objc_instances.py) - The `oinstances` command for finding class instances in memory
+- [scripts/objc_sharedcache.py](scripts/objc_sharedcache.py) - The `osc` command for displaying dyld shared cache info and ASLR slide
 - [scripts/objc_utils.py](scripts/objc_utils.py) - Utility functions for method resolution
 - [scripts/objc_core.py](scripts/objc_core.py) - Core parsing and formatting functions
 - [tests/test_obrk.py](tests/test_obrk.py) - Comprehensive test suite for breakpoint functionality
@@ -133,10 +141,14 @@ docs/                 # Design documents and guides
 - [tests/test_okeychain.py](tests/test_okeychain.py) - Test suite for okeychain command
 - [tests/test_opool.py](tests/test_opool.py) - Test suite for opool command
 - [tests/test_oinstances.py](tests/test_oinstances.py) - Test suite for oinstances command
+- [tests/test_osc.py](tests/test_osc.py) - Integration test suite for osc command
+- [tests/test_osc_unit.py](tests/test_osc_unit.py) - Unit test suite for osc command
 
 ### Implementation Notes
 
 **okeychain**: Supports iOS and macOS. Auto-detects process-specific keychains on macOS (e.g., `/Library/Keychains/apsd.keychain`). Use `--keychain=<path>` for iOS remote debugging or custom keychain files. Uses `SecKeychainOpen` + `kSecMatchSearchList` to mirror how binaries access their own keychains.
+
+**osc (Dyld Shared Cache)**: Calculates ASLR slide by reading `sharedRegionStart` directly from the dyld cache header in process memory at offset 0xE0 (224 bytes). UUID is read from offset 0x58 as two uint64_t values. This memory-based approach works for both local and remote debugging (iOS via debugserver), bypassing filesystem access and sandboxing restrictions. Reading from process memory rather than cache files on disk is critical for remote debugging scenarios where the cache file isn't accessible on the host machine.
 
 For detailed implementation patterns (LLDB expression evaluation, data extraction, etc.), see:
 - [docs/PITFALLS.md](docs/PITFALLS.md) - Common gotchas and workarounds
