@@ -565,7 +565,8 @@ def _query_keychain_class(
     query_{class_value}[(id)kSecUseAuthenticationUI] = (id)kSecUseAuthenticationUISkip;
 
     CFTypeRef result_{class_value} = NULL;
-    OSStatus status_{class_value} = (OSStatus)SecItemCopyMatching((CFDictionaryRef)query_{class_value}, &result_{class_value});
+    OSStatus status_{class_value} = (OSStatus)SecItemCopyMatching(
+        (CFDictionaryRef)query_{class_value}, &result_{class_value});
 
     (NSArray *)result_{class_value};
     """
