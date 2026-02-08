@@ -331,3 +331,85 @@ class TestParseMethodSignatureParametrized:
         assert cls == "[NSString"
         assert sel == "length]"
         assert err is None
+
+
+class TestUnquoteStringEdgeCases:
+    """Additional edge case tests for unquote_string()."""
+
+    @pytest.mark.parsing
+    def test_unquote_empty_input(self):
+        """Should handle empty string."""
+        assert unquote_string("") == ""
+
+    @pytest.mark.parsing
+    def test_unquote_only_escaped_quotes(self):
+        """Should unescape multiple escaped quotes."""
+        assert unquote_string('"\\"\\"\\"\\""') == '""""'
+
+    @pytest.mark.parsing
+    def test_unquote_mismatched_quotes(self):
+        """Should not unquote if only starts with quote."""
+        assert unquote_string('"hello') == '"hello'
+
+    @pytest.mark.parsing
+    def test_unquote_single_char_quoted(self):
+        """Should handle single character between quotes."""
+        assert unquote_string('"x"') == "x"
+
+
+class TestExtractInheritedClassEdgeCases:
+    """Additional edge case tests for extract_inherited_class()."""
+
+    @pytest.mark.parsing
+    def test_extract_with_category_symbol(self):
+        """Should handle category symbols (not match plain class)."""
+        result = extract_inherited_class(
+            "-[NSString(Addition) isEmpty]", "NSString", "isEmpty", True
+        )
+        # Category symbols have parens - the regex \w+ doesn't match them,
+        # so the overall pattern won't match
+        assert result is None
+
+    @pytest.mark.parsing
+    def test_extract_empty_symbol(self):
+        """Should handle empty string."""
+        result = extract_inherited_class("", "NSString", "length", True)
+        assert result is None
+
+    @pytest.mark.parsing
+    def test_extract_with_colons_in_selector(self):
+        """Should match inherited methods with multi-arg selectors."""
+        result = extract_inherited_class(
+            "-[NSObject setValue:forKey:]", "NSManagedObject", "setValue:forKey:", True
+        )
+        assert result == "NSObject"
+
+
+class TestExtractCategoryEdgeCases:
+    """Additional edge case tests for extract_category_from_symbol()."""
+
+    @pytest.mark.parsing
+    def test_extract_empty_string(self):
+        """Should handle empty string."""
+        cls, cat, sel = extract_category_from_symbol("")
+        assert cls is None
+        assert cat is None
+        assert sel is None
+
+    @pytest.mark.parsing
+    def test_extract_multi_arg_with_category(self):
+        """Should handle multi-argument selectors in categories."""
+        cls, cat, sel = extract_category_from_symbol(
+            "-[NSString(Utils) stringByReplacingOccurrencesOfString:withString:]"
+        )
+        assert cls == "NSString"
+        assert cat == "Utils"
+        assert sel == "stringByReplacingOccurrencesOfString:withString:"
+
+    @pytest.mark.parsing
+    def test_extract_class_method_no_category(self):
+        """Should handle class methods without categories."""
+        cls, cat, sel = extract_category_from_symbol("+[NSObject alloc]")
+        assert cls == "NSObject"
+        assert cat is None
+        assert sel == "alloc"

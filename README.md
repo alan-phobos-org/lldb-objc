@@ -490,25 +490,24 @@ osc --verbose
 
 **Output:**
 ```
-Dyld Shared Cache Information:
-======================================================================
-Base Address:     0x00007ff800000000
-End Address:      0x00007ff84a0c0000
-Size:             1.16 GB (1,241,513,984 bytes)
-UUID:             550E8400-E29B-41D4-A716-446655440000
-File Path:        /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_x86_64h
+Dyld Shared Cache
 
-Loaded at:        0x00007ff800000000 (with ASLR slide applied)
-======================================================================
+  Size:             1.16 GB (1,241,513,984 bytes)
+  Range:            0x00007ff800000000 - 0x00007ff84a0c0000
+  Preferred base:   0x00007ff800000000
+  ASLR slide:       0x0000000000000000
+
+  UUID:             550E8400-E29B-41D4-A716-446655440000
+  Path:             /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_x86_64h
 ```
 
 **Information Displayed:**
-- **Base Address**: Memory address where the shared cache is loaded
-- **End Address**: End of the shared cache in memory
 - **Size**: Total size of the shared cache (formatted as GB/MB/KB)
+- **Range**: Memory address range where the shared cache is loaded
+- **Preferred base**: The base address without ASLR slide
+- **ASLR slide**: The randomized offset applied at load time
 - **UUID**: Unique identifier for this shared cache build
-- **File Path**: Location of the shared cache file on disk
-- **ASLR Slide**: The base address includes the ASLR slide applied at load time
+- **Path**: Location of the shared cache file on disk
 
 **Notes:**
 - The dyld shared cache contains pre-linked system frameworks for faster app launch

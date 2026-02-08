@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import lldb
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from objc_core import ANSI_DIM, ANSI_RESET
 from objc_utils import evaluate_expression, register_command, require_stopped_process
@@ -168,7 +168,7 @@ def find_in_autorelease_pool_single_thread(
 
 
 def find_in_autorelease_pool(
-    process: lldb.SBProcess, class_name: str | None = None, verbose: bool = False
+    process: lldb.SBProcess, class_name: Optional[str] = None, verbose: bool = False
 ) -> Tuple[List[Tuple[int, int, str]], str]:
     """
     Find instances of a class by scanning autorelease pools across all threads.

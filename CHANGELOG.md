@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Fixed duplicate debug output in `obrk --verbose` (Thread/Frame/PC printed twice)
+- Fixed `VERSION` file drift (was 1.4.0, should be 1.6.0)
+- Fixed `version.py` fallback version drift (was 1.5.1, should be 1.6.0)
+- Fixed `Optional[str]` type hint in `objc_pool.py` for consistency with codebase style
+- Fixed `osc` command example output in README to match actual code behavior
+
+### Added
+- Edge case unit tests for `unquote_string`, `extract_inherited_class`, and `extract_category_from_symbol`
+
 ## [1.6.0] - 2026-01-21
 
 ### Added

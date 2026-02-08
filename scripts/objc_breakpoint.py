@@ -76,11 +76,6 @@ def breakpoint_on_objc_method(
         print(f"[DEBUG] Frame: {frame}")
         print(f"[DEBUG] Frame PC: 0x{frame.GetPC():x}")
 
-    if verbose:
-        print(f"[DEBUG] Thread: {thread}")
-        print(f"[DEBUG] Frame: {frame}")
-        print(f"[DEBUG] Frame PC: 0x{frame.GetPC():x}")
-
     # Parse the method signature
     is_instance_method, class_name, selector, error = parse_method_signature(method_spec)
     if error:
